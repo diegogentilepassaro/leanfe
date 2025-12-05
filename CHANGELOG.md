@@ -20,7 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **IV/2SLS**: Instrumental variables via `"y ~ x | fe | z"` syntax
 - **Standard errors**: IID, HC1 (robust), and clustered (one-way and multi-way)
 - **Weighted regression**: WLS via `weights` parameter
-- **Continuous regressor warnings**: Alerts when regressors appear continuous
 - **Python package**: `leanfe` with full test coverage (39 tests)
 - **R package**: `fasthdferg` with full test coverage (39 tests)
 - **Cross-platform consistency**: Identical API and results in Python and R

@@ -4,7 +4,6 @@ DuckDB-based fixed effects regression implementation.
 Optimized for memory efficiency using in-database operations.
 """
 
-import warnings
 import duckdb
 import numpy as np
 import polars as pl
@@ -14,7 +13,7 @@ from .common import (
     parse_formula,
     iv_2sls,
     compute_standard_errors,
-    build_result_dict
+    build_result
 )
 
 
@@ -144,18 +143,6 @@ def leanfe_duckdb(
                     con.execute(f"ALTER TABLE data ADD COLUMN {col_name} DOUBLE")
                     con.execute(f"UPDATE data SET {col_name} = CASE WHEN {factor} = '{cat}' THEN {var} ELSE 0 END")
                     x_cols.append(col_name)
-        
-        # Check for continuous treatment variables
-        continuous_regressors = []
-        for col in x_cols:
-            result = con.execute(f"SELECT COUNT(DISTINCT {col}) FROM data").fetchone()[0]
-            if result > 10:
-                continuous_regressors.append(col)
-        if continuous_regressors:
-            warnings.warn(
-                f"Continuous regressor(s) detected: {continuous_regressors}.",
-                UserWarning, stacklevel=2
-            )
         
         # Handle factor variables
         if factor_vars:
@@ -336,7 +323,17 @@ def leanfe_duckdb(
     finally:
         con.close()
     
-    return build_result_dict(
-        x_cols=x_cols, beta=beta, se=se, n_obs=n_obs, iterations=it,
-        vcov=vcov, is_iv=is_iv, n_instruments=len(instruments) if is_iv else None, n_clusters=n_clusters
+    return build_result(
+        x_cols=x_cols,
+        beta=beta,
+        se=se,
+        n_obs=n_obs,
+        iterations=it,
+        vcov=vcov,
+        is_iv=is_iv,
+        n_instruments=len(instruments) if is_iv else None,
+        n_clusters=n_clusters,
+        df_resid=df_resid,
+        formula=formula,
+        fe_cols=fe_cols
     )

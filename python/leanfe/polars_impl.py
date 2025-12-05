@@ -6,14 +6,13 @@ Optimized for speed using Polars DataFrame operations.
 
 import polars as pl
 import numpy as np
-import warnings
 from typing import List, Optional, Union
 
 from .common import (
     parse_formula,
     iv_2sls,
     compute_standard_errors,
-    build_result_dict
+    build_result
 )
 
 
@@ -216,19 +215,6 @@ def leanfe_polars(
         df, interaction_cols = _expand_interactions(df, interactions)
         x_cols = x_cols + interaction_cols
     
-    # Check for continuous treatment variables
-    continuous_regressors = []
-    for col in x_cols:
-        if df[col].dtype in (pl.Float64, pl.Float32):
-            n_unique = df[col].n_unique()
-            if n_unique > 10:
-                continuous_regressors.append(col)
-    if continuous_regressors:
-        warnings.warn(
-            f"Continuous regressor(s) detected: {continuous_regressors}.",
-            UserWarning, stacklevel=2
-        )
-    
     # Optimize types (always done for memory efficiency)
     factor_var_names = [var for var, ref in factor_vars]
     df = _optimize_dtypes(df, fe_cols + factor_var_names)
@@ -346,7 +332,12 @@ def leanfe_polars(
         ssc=ssc
     )
     
-    return build_result_dict(
+    # Compute R-squared (within)
+    rss = np.sum(resid**2)
+    tss = np.sum((Y - np.mean(Y))**2)
+    r_squared_within = 1 - rss / tss if tss > 0 else None
+    
+    return build_result(
         x_cols=x_cols,
         beta=beta,
         se=se,
@@ -355,5 +346,9 @@ def leanfe_polars(
         vcov=vcov,
         is_iv=is_iv,
         n_instruments=len(instruments) if is_iv else None,
-        n_clusters=n_clusters
+        n_clusters=n_clusters,
+        df_resid=df_resid,
+        r_squared_within=r_squared_within,
+        formula=formula,
+        fe_cols=fe_cols
     )

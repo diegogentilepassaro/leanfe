@@ -8,6 +8,8 @@ import re
 import numpy as np
 from typing import List, Optional, Tuple
 
+from .result import LeanFEResult
+
 
 def _parse_i_term(term: str) -> Tuple[str, Optional[str]]:
     """
@@ -258,6 +260,46 @@ def compute_standard_errors(
     return se, n_clusters
 
 
+def build_result(
+    x_cols: List[str],
+    beta: np.ndarray,
+    se: np.ndarray,
+    n_obs: int,
+    iterations: int,
+    vcov: str,
+    is_iv: bool,
+    n_instruments: Optional[int],
+    n_clusters: Optional[int],
+    df_resid: Optional[int] = None,
+    r_squared_within: Optional[float] = None,
+    formula: Optional[str] = None,
+    fe_cols: Optional[List[str]] = None
+) -> LeanFEResult:
+    """
+    Build LeanFEResult object.
+    
+    Returns
+    -------
+    LeanFEResult
+        Result object with formatted output
+    """
+    return LeanFEResult(
+        coefficients=dict(zip(x_cols, beta)),
+        std_errors=dict(zip(x_cols, se)),
+        n_obs=n_obs,
+        iterations=iterations,
+        vcov_type=vcov,
+        is_iv=is_iv,
+        n_instruments=n_instruments if is_iv else None,
+        n_clusters=n_clusters,
+        df_resid=df_resid,
+        r_squared_within=r_squared_within,
+        formula=formula,
+        fe_cols=fe_cols
+    )
+
+
+# Keep old function for backwards compatibility
 def build_result_dict(
     x_cols: List[str],
     beta: np.ndarray,
@@ -271,6 +313,8 @@ def build_result_dict(
 ) -> dict:
     """
     Build standardized result dictionary.
+    
+    DEPRECATED: Use build_result() instead which returns LeanFEResult.
     
     Returns
     -------

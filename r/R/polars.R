@@ -223,24 +223,6 @@ leanfe_polars <- function(
     x_cols <- c(x_cols, expanded$interaction_cols)
   }
   
-  # Check for continuous treatment variables
-  continuous_regressors <- c()
-  for (col in x_cols) {
-    dtype <- df$schema[[col]]
-    if (identical(dtype, pl$Float64) || identical(dtype, pl$Float32)) {
-      n_unique <- as.data.frame(df$select(pl$col(col)$n_unique()))[[1]]
-      if (n_unique > 10) {
-        continuous_regressors <- c(continuous_regressors, col)
-      }
-    }
-  }
-  if (length(continuous_regressors) > 0) {
-    warning(sprintf(
-      "Continuous regressor(s) detected: %s.",
-      paste(continuous_regressors, collapse = ", ")
-    ), call. = FALSE)
-  }
-  
   # Optimize types (always done for memory efficiency)
   factor_var_names <- sapply(factor_vars, function(fv) fv$var)
   df <- .optimize_dtypes_polars(df, c(fe_cols, factor_var_names))
