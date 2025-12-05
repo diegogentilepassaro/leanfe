@@ -1,44 +1,33 @@
 ---
-title: "Difference-in-Differences"
+title: "Difference-in-Differences & Event Studies"
 subtitle: "Causal inference with two-way fixed effects"
 ---
 
 ## Overview
 
-Difference-in-Differences (DiD) is a powerful method for estimating causal effects when you have panel data with a treatment that affects some units but not others. This tutorial covers:
+Difference-in-Differences (DiD) is a powerful method for estimating causal effects from panel data. This tutorial covers:
 
 - Classic two-way fixed effects (TWFE) specification
+- Event study designs for dynamic treatment effects
+- Visualizing parallel trends and treatment effects
 - Proper clustering for inference
-- Interpreting treatment effects
-- Limitations and considerations
 
 ## The DiD Setup
 
 DiD requires:
 
 1. **Panel data**: Multiple units observed over multiple time periods
-2. **Treatment variation**: Some units get treated, others don't
+2. **Treatment variation**: Some units get treated at a specific time, others don't
 3. **Parallel trends**: Treated and control units would have followed similar trends absent treatment
 
-## TWFE Specification
+## Simulating a Policy Evaluation
 
-The classic DiD model with two-way fixed effects:
+Let's simulate a clean policy evaluation with:
 
-```
-y ~ treated_post | unit + time
-```
-
-Where:
-- `y`: Outcome variable
-- `treated_post`: Indicator = 1 for treated units after treatment, 0 otherwise
-- `unit`: Unit fixed effects (absorb time-invariant unit characteristics)
-- `time`: Time fixed effects (absorb common time shocks)
-
-The coefficient on `treated_post` is the **average treatment effect on the treated (ATT)**.
-
-## Example: Policy Evaluation
-
-Let's simulate a policy that affects some states starting in 2020:
+- 100 states observed over 20 years (2005-2024)
+- 40 states receive treatment starting in 2015
+- Clear parallel trends pre-treatment
+- Immediate and persistent treatment effect of 3 units
 
 ```{python}
 #| echo: true
@@ -50,41 +39,62 @@ from leanfe import leanfe
 
 np.random.seed(42)
 
-# Setup: 50 states, 10 years (2015-2024)
-n_states = 50
-years = list(range(2015, 2025))
+# Setup
+n_states = 100
+years = list(range(2005, 2025))
 n_years = len(years)
+treatment_year = 2015
+treated_states = set(range(1, 41))  # States 1-40 are treated
+true_effect = 3.0
 
-# 20 states get treated starting in 2020
-treated_states = list(range(1, 21))  # States 1-20 are treated
-treatment_year = 2020
-true_effect = 3.0  # True treatment effect
+# Generate state and year fixed effects
+state_fes = {s: np.random.normal(0, 5) for s in range(1, n_states + 1)}
+year_fes = {y: 0.2 * (y - 2005) for y in years}  # Common upward trend
 
-# Generate panel
+# Generate panel data
 data = []
 for state in range(1, n_states + 1):
-    state_fe = np.random.normal(0, 2)  # State fixed effect
+    is_treated = state in treated_states
+    
     for year in years:
-        year_fe = np.random.normal(0, 0.5)  # Year fixed effect
+        # Event time (relative to treatment year)
+        event_time = year - treatment_year if is_treated else None
         
         # Treatment indicator
-        treated_post = 1 if (state in treated_states and year >= treatment_year) else 0
+        post = 1 if year >= treatment_year else 0
+        treated_post = float(is_treated and post)
         
-        # Outcome: y = true_effect * treated_post + state_fe + year_fe + noise
-        y = true_effect * treated_post + state_fe + year_fe + np.random.normal(0, 1)
+        # Outcome: parallel trends + treatment effect + noise
+        y = (state_fes[state] + 
+             year_fes[year] + 
+             true_effect * treated_post + 
+             np.random.normal(0, 1))
         
         data.append({
             "state_id": state,
             "year": year,
-            "treated_post": float(treated_post),
+            "event_time": event_time,
+            "treated": float(is_treated),
+            "post": float(post),
+            "treated_post": treated_post,
             "y": y
         })
 
 df = pl.DataFrame(data)
-print(f"Panel: {df.shape[0]} observations ({n_states} states × {n_years} years)")
-print(f"Treated states: {len(treated_states)}")
+print(f"Panel: {df.shape[0]:,} observations ({n_states} states × {n_years} years)")
+print(f"Treated states: {len(treated_states)} | Control states: {n_states - len(treated_states)}")
 print(f"Treatment year: {treatment_year}")
 ```
+
+## Classic TWFE Estimation
+
+The standard DiD model with two-way fixed effects:
+
+```
+y ~ treated_post | state + year
+```
+
+The coefficient on `treated_post` is the **average treatment effect on the treated (ATT)**.
 
 ```{python}
 #| echo: true
@@ -94,91 +104,191 @@ print(f"Treatment year: {treatment_year}")
 result = leanfe(
     formula="y ~ treated_post | state_id + year",
     data=df,
-    vcov="iid"
+    vcov="cluster",
+    cluster_cols=["state_id"]
 )
 
 print(f"True treatment effect: {true_effect}")
-print(f"Estimated effect: {result['coefficients']['treated_post']:.4f}")
-print(f"Standard error: {result['std_errors']['treated_post']:.4f}")
+print(f"Estimated effect:      {result['coefficients']['treated_post']:.4f}")
+print(f"Clustered SE:          {result['std_errors']['treated_post']:.4f}")
+print(f"Number of clusters:    {result['n_clusters']}")
 ```
 
-## Clustering Standard Errors
+## Event Study Design
 
-For DiD, you should cluster standard errors at the **treatment unit level** (the level at which treatment varies):
+Event studies extend DiD to examine:
+
+- **Pre-treatment periods**: Test the parallel trends assumption
+- **Post-treatment periods**: Show how treatment effects evolve over time
+
+### Creating Event Time Indicators
 
 ```{python}
 #| echo: true
 #| output: true
 
-# Cluster at state level (treatment varies by state)
-result_clustered = leanfe(
+# Create event time dummies for periods -5 to +9
+# Reference period: t = -1 (omitted)
+event_window = list(range(-5, 10))
+reference_period = -1
+
+for et in event_window:
+    if et == reference_period:
+        continue
+    col_name = f"et_m{abs(et)}" if et < 0 else f"et_p{et}"
+    df = df.with_columns(
+        pl.when(pl.col("event_time") == et)
+        .then(1.0)
+        .otherwise(0.0)
+        .alias(col_name)
+    )
+
+# Build formula
+et_vars = [f"et_m{abs(et)}" if et < 0 else f"et_p{et}" 
+           for et in event_window if et != reference_period]
+formula = f"y ~ {' + '.join(et_vars)} | state_id + year"
+
+print(f"Event time indicators: {len(et_vars)} dummies")
+print(f"Reference period: t = {reference_period}")
+```
+
+### Event Study Regression
+
+```{python}
+#| echo: true
+#| output: true
+
+# Run event study
+result_es = leanfe(
+    formula=formula,
+    data=df,
+    vcov="cluster",
+    cluster_cols=["state_id"]
+)
+
+# Extract coefficients
+coefs = []
+for et in event_window:
+    if et == reference_period:
+        coefs.append({"event_time": et, "coef": 0.0, "se": 0.0})
+    else:
+        col_name = f"et_m{abs(et)}" if et < 0 else f"et_p{et}"
+        coefs.append({
+            "event_time": et,
+            "coef": result_es['coefficients'][col_name],
+            "se": result_es['std_errors'][col_name]
+        })
+
+coef_df = pl.DataFrame(coefs).sort("event_time")
+```
+
+### Event Study Plot
+
+```{python}
+#| echo: true
+#| output: true
+#| fig-cap: "Event Study: Parallel Trends and Treatment Effect"
+#| label: fig-event-study
+
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(10, 6))
+
+et = coef_df["event_time"].to_numpy()
+coef = coef_df["coef"].to_numpy()
+se = coef_df["se"].to_numpy()
+
+# Confidence intervals
+ci_lower = coef - 1.96 * se
+ci_upper = coef + 1.96 * se
+
+# Plot confidence interval band
+ax.fill_between(et, ci_lower, ci_upper, alpha=0.2, color='steelblue')
+
+# Plot coefficients
+ax.plot(et, coef, 'o-', color='steelblue', markersize=8, linewidth=2, 
+        label='Point estimate')
+
+# Reference lines
+ax.axhline(y=0, color='gray', linestyle='-', linewidth=0.8)
+ax.axhline(y=true_effect, color='darkgreen', linestyle='--', linewidth=1.5, 
+           alpha=0.7, label=f'True effect = {true_effect}')
+ax.axvline(x=-0.5, color='red', linestyle='--', linewidth=1.5, alpha=0.7)
+
+# Annotations
+ax.annotate('Treatment\nbegins', xy=(-0.5, true_effect + 0.3), 
+            fontsize=10, ha='center', color='red')
+ax.annotate('Pre-treatment:\nParallel trends', xy=(-3, 0.5), 
+            fontsize=10, ha='center', color='gray',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+ax.annotate('Post-treatment:\nTreatment effect', xy=(4, true_effect - 0.5), 
+            fontsize=10, ha='center', color='gray',
+            bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+# Labels
+ax.set_xlabel('Years relative to treatment', fontsize=12)
+ax.set_ylabel('Coefficient (relative to t = -1)', fontsize=12)
+ax.set_title('Event Study: Clear Parallel Trends and Treatment Effect', fontsize=14)
+ax.set_xticks(event_window)
+ax.set_xlim(-6, 10)
+ax.legend(loc='upper left')
+ax.grid(True, alpha=0.3)
+
+plt.tight_layout()
+plt.show()
+```
+
+## Interpreting the Event Study
+
+The plot shows the classic pattern we want to see:
+
+1. **Pre-treatment (t < 0)**: Coefficients are close to zero and statistically insignificant, confirming **parallel trends**
+2. **Treatment onset (t = 0)**: Sharp jump to the treatment effect
+3. **Post-treatment (t > 0)**: Coefficients remain stable around the true effect of 3
+
+This pattern provides strong evidence that:
+
+- The parallel trends assumption holds
+- The treatment effect is real and immediate
+- The effect persists over time
+
+## Choosing the Reference Period
+
+| Reference | When to use |
+|-----------|-------------|
+| `t = -1` | Standard choice, period just before treatment |
+| `t = -2` | If anticipation effects are possible |
+| Average of pre-periods | For more stable baseline |
+
+## Clustering Standard Errors
+
+Always cluster at the level where treatment varies:
+
+```{python}
+#| echo: true
+#| output: true
+
+# Compare IID vs clustered SEs
+result_iid = leanfe(
+    formula="y ~ treated_post | state_id + year",
+    data=df,
+    vcov="iid"
+)
+
+result_cluster = leanfe(
     formula="y ~ treated_post | state_id + year",
     data=df,
     vcov="cluster",
     cluster_cols=["state_id"]
 )
 
-print("With clustered standard errors:")
-print(f"Estimated effect: {result_clustered['coefficients']['treated_post']:.4f}")
-print(f"Clustered SE: {result_clustered['std_errors']['treated_post']:.4f}")
-print(f"Number of clusters: {result_clustered['n_clusters']}")
+print("Standard Error Comparison:")
+print(f"  IID SE:       {result_iid['std_errors']['treated_post']:.4f}")
+print(f"  Clustered SE: {result_cluster['std_errors']['treated_post']:.4f}")
+print(f"  Ratio:        {result_cluster['std_errors']['treated_post'] / result_iid['std_errors']['treated_post']:.2f}x")
 ```
 
-Notice the clustered SE is typically larger than the IID SE, reflecting the correlation within states.
-
-## Adding Covariates
-
-You can include time-varying covariates:
-
-```{python}
-#| echo: true
-#| output: true
-
-# Add a covariate
-x1_vals = np.random.normal(0, 1, len(df))
-df = df.with_columns(x1 = pl.Series(x1_vals))
-
-# Regenerate y with covariate effect
-np.random.seed(42)
-state_fes = {s: np.random.normal(0, 2) for s in range(1, n_states + 1)}
-year_fes = {y: np.random.normal(0, 0.5) for y in years}
-
-y_new = []
-x1_list = df["x1"].to_list()
-treated_list = df["treated_post"].to_list()
-state_list = df["state_id"].to_list()
-year_list = df["year"].to_list()
-
-for i in range(len(df)):
-    treated_post = treated_list[i]
-    state_fe = state_fes[state_list[i]]
-    year_fe = year_fes[year_list[i]]
-    x1 = x1_list[i]
-    y = true_effect * treated_post + 0.5 * x1 + state_fe + year_fe + np.random.normal(0, 1)
-    y_new.append(y)
-
-df = df.with_columns(y = pl.Series(y_new))
-
-# Estimate with covariate
-result_cov = leanfe(
-    formula="y ~ treated_post + x1 | state_id + year",
-    data=df,
-    vcov="cluster",
-    cluster_cols=["state_id"]
-)
-
-print("With covariate:")
-for var, coef in result_cov['coefficients'].items():
-    se = result_cov['std_errors'][var]
-    print(f"  {var}: {coef:.4f} (SE: {se:.4f})")
-```
-
-## Interpreting the Treatment Effect
-
-The `treated_post` coefficient represents:
-
-- **ATT (Average Treatment Effect on the Treated)**: The average effect of treatment on units that received it
-- **Interpretation**: "Being in a treated state after the policy increased y by X units"
+Clustered SEs are typically larger, reflecting within-state correlation.
 
 ## Limitations: Staggered Adoption
 
@@ -187,35 +297,24 @@ The `treated_post` coefficient represents:
 1. **Treatment timing varies** across units (staggered adoption)
 2. **Treatment effects are heterogeneous** across units or time
 
-In these cases, already-treated units can serve as "controls" for newly-treated units, leading to negative weights and bias.
-
-### When TWFE Works Well
-
-- All treated units receive treatment at the same time
-- Treatment effects are homogeneous
-- Parallel trends assumption holds
-
-### When to Use Alternative Estimators
-
-For staggered adoption with heterogeneous effects, consider:
+In these cases, consider alternative estimators:
 
 - Callaway & Sant'Anna (2021)
-- Sun & Abraham (2021)
+- Sun & Abraham (2021)  
 - de Chaisemartin & D'Haultfœuille (2020)
-
-These are not currently implemented in leanfe but can be used alongside it.
 
 ## Summary
 
 | Component | Recommendation |
 |-----------|----------------|
-| Formula | `y ~ treated_post \| unit + time` |
+| Basic DiD | `y ~ treated_post \| unit + time` |
+| Event study | Create dummies for each event time, omit t = -1 |
 | Standard errors | Cluster at treatment unit level |
+| Parallel trends | Pre-treatment coefficients should be ≈ 0 |
 | Interpretation | ATT for treated units post-treatment |
-| Caution | Check for staggered adoption issues |
 
 ## Next Steps
 
-- [Event Studies](event-study.qmd) - Examine dynamic treatment effects
 - [IV Regression](iv-regression.qmd) - Address endogeneity
+- [Factor Variables](factor-variables.qmd) - Heterogeneous effects by group
 - [Large Datasets](../guides/large-datasets.qmd) - Scale to big data

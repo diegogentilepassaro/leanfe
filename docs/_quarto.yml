@@ -20,10 +20,8 @@ website:
             href: tutorials/factor-variables.qmd
           - text: "Standard Errors"
             href: tutorials/standard-errors.qmd
-          - text: "Difference-in-Differences"
+          - text: "DiD & Event Studies"
             href: tutorials/did.qmd
-          - text: "Event Studies"
-            href: tutorials/event-study.qmd
           - text: "IV Regression"
             href: tutorials/iv-regression.qmd
       - text: "Guides"
