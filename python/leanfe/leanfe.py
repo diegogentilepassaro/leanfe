@@ -167,7 +167,3 @@ def leanfe(
         raise ValueError(f"backend must be 'polars' or 'duckdb', got '{backend}'")
 
 
-# Backwards compatibility aliases
-fast_feols = leanfe
-fast_feols_polars = leanfe_polars
-fast_feols_duckdb = leanfe_duckdb
