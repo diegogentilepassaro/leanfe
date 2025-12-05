@@ -1,0 +1,4 @@
+# file: /Users/diegogp/Desktop/Diego/regional SIS models/package/docs/benchmarks/benchmark_runner.py
+# hypothesis_version: 6.148.5
+
+[0.0001, 0.3, 0.5, 1.5, 2.5, 100, 500, 1000, 1024, 5000, 10000, 100000, 500000, 1000000, '\nBenchmark Summary:', 'HC1', '__main__', 'cluster', 'coefficient_x1', 'coefficients', 'duckdb', 'fe1', 'fe2', 'fe_cardinality', 'high', 'iid', 'iteration', 'leanfe-duckdb', 'leanfe-polars', 'low', 'medium', 'n_fe1', 'n_fe2', 'n_obs', 'package', 'peak_memory_mb', 'polars', 'seed', 'time_seconds', 'treatment', 'vcov_type', 'w', 'x1', 'y']

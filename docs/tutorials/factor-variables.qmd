@@ -1,0 +1,222 @@
+---
+title: "Factor Variables"
+subtitle: "Categorical regressors and interactions"
+---
+
+## Overview
+
+This tutorial covers how to include categorical variables as regressors (not just fixed effects) using the `i()` syntax. You'll learn:
+
+- The `i(var)` syntax for dummy variable expansion
+- Setting custom reference categories with `i(var, ref=value)`
+- Creating interactions for heterogeneous effects
+
+## The `i()` Syntax
+
+When you want a categorical variable as a **regressor** (not absorbed as a fixed effect), use the `i()` function:
+
+```
+y ~ treatment + i(region) | firm + year
+```
+
+This expands `region` into dummy variables, with one category omitted as the reference.
+
+### Key Difference: Fixed Effects vs Factor Variables
+
+| Syntax | What it does |
+|--------|--------------|
+| `y ~ x \| region` | Absorbs region as fixed effect (coefficients not reported) |
+| `y ~ x + i(region)` | Includes region dummies as regressors (coefficients reported) |
+
+## Basic Factor Variable Example
+
+```{python}
+#| echo: true
+#| output: true
+
+import numpy as np
+import polars as pl
+from leanfe import leanfe
+
+# Generate data with regional heterogeneity
+np.random.seed(42)
+n_obs = 50_000
+
+regions = ["North", "South", "East", "West"]
+region = np.random.choice(regions, n_obs)
+
+# True effects: North=0 (reference), South=1.5, East=2.0, West=-0.5
+region_effects = {"North": 0, "South": 1.5, "East": 2.0, "West": -0.5}
+region_effect = np.array([region_effects[r] for r in region])
+
+df = pl.DataFrame({
+    "firm_id": np.random.randint(1, 200, n_obs),
+    "year": np.random.randint(2015, 2025, n_obs),
+    "region": region,
+    "treatment": np.random.binomial(1, 0.3, n_obs).astype(float),
+    "x1": np.random.normal(0, 1, n_obs),
+})
+
+# y = 2.5*treatment + 1.5*x1 + region_effect + firm_fe + year_fe + noise
+firm_fe = np.random.normal(0, 0.5, 201)[df["firm_id"].to_numpy()]
+year_fe = np.random.normal(0, 0.3, 11)[df["year"].to_numpy() - 2015]
+
+df = df.with_columns(
+    y = (pl.lit(2.5) * pl.col("treatment") 
+         + pl.lit(1.5) * pl.col("x1")
+         + pl.lit(region_effect)
+         + pl.lit(firm_fe)
+         + pl.lit(year_fe)
+         + pl.lit(np.random.normal(0, 1, n_obs)))
+)
+
+print(f"Data shape: {df.shape}")
+print(f"Regions: {df['region'].unique().to_list()}")
+```
+
+```{python}
+#| echo: true
+#| output: true
+
+# Include region as factor variable
+result = leanfe(
+    formula="y ~ treatment + x1 + i(region) | firm_id + year",
+    data=df,
+    vcov="iid"
+)
+
+print("Coefficients:")
+for var, coef in result['coefficients'].items():
+    se = result['std_errors'][var]
+    print(f"  {var}: {coef:.4f} (SE: {se:.4f})")
+```
+
+Notice that:
+- One region is omitted as the reference category (alphabetically first by default)
+- The coefficients for other regions are **relative to the reference**
+
+## Custom Reference Category
+
+By default, leanfe uses the first category (sorted alphabetically) as the reference. You can specify a different reference:
+
+```{python}
+#| echo: true
+#| output: true
+
+# Use "North" as reference (same as default since it's first alphabetically)
+result_north = leanfe(
+    formula="y ~ treatment + x1 + i(region, ref='North') | firm_id + year",
+    data=df,
+    vcov="iid"
+)
+
+print("With North as reference:")
+for var, coef in result_north['coefficients'].items():
+    if 'region' in var:
+        print(f"  {var}: {coef:.4f}")
+```
+
+```{python}
+#| echo: true
+#| output: true
+
+# Use "South" as reference instead
+result_south = leanfe(
+    formula="y ~ treatment + x1 + i(region, ref='South') | firm_id + year",
+    data=df,
+    vcov="iid"
+)
+
+print("\nWith South as reference:")
+for var, coef in result_south['coefficients'].items():
+    if 'region' in var:
+        print(f"  {var}: {coef:.4f}")
+```
+
+The coefficients change because they're now relative to South instead of North.
+
+## Interpreting Coefficients
+
+When interpreting factor variable coefficients:
+
+1. **The reference category coefficient is implicitly 0**
+2. **Other coefficients are differences from the reference**
+
+For example, if North is the reference and `region_South = 1.5`:
+- The effect of being in South vs North is +1.5 units of y
+
+## Interactions: Heterogeneous Treatment Effects
+
+A powerful use case is testing whether treatment effects vary by group:
+
+```{python}
+#| echo: true
+#| output: true
+
+# Generate data with heterogeneous treatment effects by region
+np.random.seed(123)
+n_obs = 50_000
+
+region = np.random.choice(regions, n_obs)
+treatment = np.random.binomial(1, 0.3, n_obs).astype(float)
+
+# True heterogeneous effects: 
+# North: treatment=2.0, South: treatment=3.0, East: treatment=1.0, West: treatment=2.5
+het_effects = {"North": 2.0, "South": 3.0, "East": 1.0, "West": 2.5}
+treatment_effect = np.array([het_effects[r] for r in region]) * treatment
+
+df_het = pl.DataFrame({
+    "firm_id": np.random.randint(1, 200, n_obs),
+    "year": np.random.randint(2015, 2025, n_obs),
+    "region": region,
+    "treatment": treatment,
+    "x1": np.random.normal(0, 1, n_obs),
+})
+
+firm_fe = np.random.normal(0, 0.5, 201)[df_het["firm_id"].to_numpy()]
+year_fe = np.random.normal(0, 0.3, 11)[df_het["year"].to_numpy() - 2015]
+
+df_het = df_het.with_columns(
+    y = (pl.lit(treatment_effect)
+         + pl.lit(1.5) * pl.col("x1")
+         + pl.lit(firm_fe)
+         + pl.lit(year_fe)
+         + pl.lit(np.random.normal(0, 1, n_obs)))
+)
+```
+
+```{python}
+#| echo: true
+#| output: true
+
+# Estimate heterogeneous treatment effects
+result_het = leanfe(
+    formula="y ~ treatment:i(region) + x1 | firm_id + year",
+    data=df_het,
+    vcov="iid"
+)
+
+print("Heterogeneous treatment effects by region:")
+print("(True values: North=2.0, South=3.0, East=1.0, West=2.5)")
+print()
+for var, coef in result_het['coefficients'].items():
+    if 'treatment' in var and 'region' in var:
+        se = result_het['std_errors'][var]
+        print(f"  {var}: {coef:.4f} (SE: {se:.4f})")
+```
+
+The interaction `treatment:i(region)` gives you separate treatment effect estimates for each region.
+
+## Summary
+
+| Syntax | Use Case |
+|--------|----------|
+| `i(var)` | Include categorical variable as regressor |
+| `i(var, ref='value')` | Specify reference category |
+| `treatment:i(var)` | Heterogeneous effects by category |
+
+## Next Steps
+
+- [Standard Errors](standard-errors.qmd) - Deep dive into SE options
+- [Difference-in-Differences](did.qmd) - Causal inference with TWFE
+- [Event Studies](event-study.qmd) - Dynamic treatment effects

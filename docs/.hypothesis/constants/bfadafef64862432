@@ -1,0 +1,4 @@
+# file: /Users/diegogp/Desktop/Diego/regional SIS models/package/docs/_data/generate_sample.py
+# hypothesis_version: 6.148.5
+
+[0.1, 0.2, 0.3, 0.5, 0.8, 1.5, 2.5, 100, 500, 999, 1000, 5000, 10000, 100000, 1000000, 5000000, '\nData types:', '\nSample rows:', '__main__', 'customer_id', 'event_time', 'high', 'instrument', 'low', 'medium', 'n_products', 'n_regions', 'n_units', 'product_id', 'region', 'time_id', 'treated_post', 'treatment', 'weight', 'x1', 'x2', 'y']

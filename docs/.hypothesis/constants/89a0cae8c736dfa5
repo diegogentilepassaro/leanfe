@@ -1,0 +1,4 @@
+# file: /Users/diegogp/Desktop/Diego/regional SIS models/package/python/leanfe/__init__.py
+# hypothesis_version: 6.148.5
+
+['0.1.0', 'fast_feols', 'fast_feols_duckdb', 'fast_feols_polars', 'leanfe', 'parse_formula']

@@ -1,0 +1,4 @@
+# file: /Users/diegogp/Desktop/Diego/regional SIS models/package/python/leanfe/polars_impl.py
+# hypothesis_version: 6.148.5
+
+[0.001, -2147483648, -32768, -128, 100, 127, 32767, 2147483647, '_', 'cluster', 'cnt', 'iid', 'left', 'm']

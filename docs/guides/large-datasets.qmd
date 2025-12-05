@@ -1,0 +1,233 @@
+---
+title: "Large Datasets"
+subtitle: "Working with data larger than RAM"
+---
+
+## Overview
+
+leanfe's DuckDB backend enables you to run fixed effects regressions on datasets that don't fit in memory. This guide covers:
+
+- When to use DuckDB vs Polars
+- Reading directly from parquet files
+- Memory vs speed tradeoffs
+- Best practices for large-scale analysis
+
+## Backend Selection
+
+| Backend | Memory Usage | Speed | Best For |
+|---------|--------------|-------|----------|
+| **Polars** (default) | Higher | ⚡ Fastest | Data fits in RAM |
+| **DuckDB** | 💾 Minimal | Slower | Data larger than RAM |
+
+### Decision Flowchart
+
+```
+Does your data fit comfortably in RAM?
+├── Yes → Use Polars (default)
+└── No → Use DuckDB
+    └── Is data in parquet format?
+        ├── Yes → Read directly from file path
+        └── No → Convert to parquet first
+```
+
+## Using the DuckDB Backend
+
+Simply set `backend="duckdb"`:
+
+```{python}
+#| echo: true
+#| output: true
+
+import numpy as np
+import polars as pl
+from leanfe import leanfe
+
+# Generate sample data
+np.random.seed(42)
+n_obs = 100_000
+
+df = pl.DataFrame({
+    "y": np.random.normal(0, 1, n_obs),
+    "treatment": np.random.binomial(1, 0.3, n_obs).astype(float),
+    "x1": np.random.normal(0, 1, n_obs),
+    "firm_id": np.random.randint(1, 1001, n_obs),
+    "year": np.random.randint(2015, 2025, n_obs),
+})
+
+# Use DuckDB backend
+result = leanfe(
+    formula="y ~ treatment + x1 | firm_id + year",
+    data=df,
+    vcov="iid",
+    backend="duckdb"
+)
+
+print(f"Observations: {result['n_obs']}")
+print(f"Coefficients: {result['coefficients']}")
+```
+
+## Reading Directly from Parquet
+
+For very large datasets, avoid loading into memory entirely:
+
+```{python}
+#| echo: true
+#| output: true
+
+# Save sample data to parquet
+import os
+os.makedirs("_data", exist_ok=True)
+parquet_path = "_data/sample_large.parquet"
+df.write_parquet(parquet_path)
+
+# Read directly from parquet (no memory loading!)
+result_parquet = leanfe(
+    formula="y ~ treatment + x1 | firm_id + year",
+    data=parquet_path,  # Pass file path instead of DataFrame
+    vcov="iid",
+    backend="duckdb"
+)
+
+print(f"Processed from parquet file")
+print(f"Observations: {result_parquet['n_obs']}")
+```
+
+This is the key advantage of DuckDB: it streams data from disk, never loading the full dataset into memory.
+
+## Memory Comparison
+
+```{python}
+#| echo: true
+#| output: true
+
+import time
+
+# Compare backends
+print("Backend Comparison (100K observations):")
+
+# Polars
+start = time.time()
+result_polars = leanfe(
+    formula="y ~ treatment + x1 | firm_id + year",
+    data=df,
+    vcov="iid",
+    backend="polars"
+)
+polars_time = time.time() - start
+print(f"  Polars: {polars_time:.3f}s")
+
+# DuckDB from DataFrame
+start = time.time()
+result_duckdb = leanfe(
+    formula="y ~ treatment + x1 | firm_id + year",
+    data=df,
+    vcov="iid",
+    backend="duckdb"
+)
+duckdb_time = time.time() - start
+print(f"  DuckDB: {duckdb_time:.3f}s")
+
+# DuckDB from parquet
+start = time.time()
+result_parquet = leanfe(
+    formula="y ~ treatment + x1 | firm_id + year",
+    data=parquet_path,
+    vcov="iid",
+    backend="duckdb"
+)
+parquet_time = time.time() - start
+print(f"  DuckDB (parquet): {parquet_time:.3f}s")
+
+print(f"\nCoefficients match: {abs(result_polars['coefficients']['treatment'] - result_duckdb['coefficients']['treatment']) < 1e-6}")
+```
+
+## Speed vs Memory Tradeoff
+
+| Scenario | Recommendation |
+|----------|----------------|
+| 1M obs, 16GB RAM | Polars (fast) |
+| 10M obs, 16GB RAM | DuckDB (fits but tight) |
+| 50M obs, 16GB RAM | DuckDB (required) |
+| 100M+ obs | DuckDB from parquet |
+
+### Typical Performance
+
+Based on benchmarks with two-way fixed effects:
+
+| Dataset Size | Polars Time | DuckDB Time | DuckDB Memory |
+|--------------|-------------|-------------|---------------|
+| 1M obs | ~2s | ~5s | ~50 MB |
+| 5M obs | ~8s | ~20s | ~100 MB |
+| 10M obs | ~15s | ~40s | ~150 MB |
+
+*DuckDB memory stays low regardless of dataset size when reading from parquet.*
+
+## Best Practices
+
+### 1. Use Parquet Format
+
+Parquet is columnar and compressed—ideal for analytical queries:
+
+```python
+# Convert CSV to parquet (one-time)
+import polars as pl
+pl.read_csv("large_data.csv").write_parquet("large_data.parquet")
+```
+
+### 2. Partition Large Datasets
+
+For very large datasets, partition by a key variable:
+
+```python
+# Write partitioned parquet
+df.write_parquet(
+    "data/",
+    partition_by=["year"]
+)
+```
+
+### 3. Select Only Needed Columns
+
+When reading parquet, DuckDB only loads columns used in the regression.
+
+### 4. Use Sampling for Exploration
+
+During development, sample your data:
+
+```python
+result = leanfe(
+    formula="y ~ treatment | firm_id + year",
+    data="large_data.parquet",
+    backend="duckdb",
+    sample_frac=0.1  # Use 10% sample
+)
+```
+
+## Example: Processing a 10GB Dataset
+
+```python
+# This works even with only 8GB RAM!
+result = leanfe(
+    formula="y ~ treatment + x1 + x2 | customer_id + product_id + month",
+    data="sales_data_10gb.parquet",
+    vcov="cluster",
+    cluster_cols=["customer_id"],
+    backend="duckdb"
+)
+
+# Peak memory: ~200MB (not 10GB!)
+```
+
+## Summary
+
+| Task | Approach |
+|------|----------|
+| Data fits in RAM | Use Polars (default) |
+| Data larger than RAM | Use DuckDB |
+| Very large data | DuckDB + parquet files |
+| Exploration | Use `sample_frac` parameter |
+
+## Next Steps
+
+- [Benchmarks](../benchmarks/overview.qmd) - Detailed performance comparisons
+- [API Reference](../reference/python.qmd) - Full parameter documentation

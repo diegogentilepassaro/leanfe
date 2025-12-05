@@ -1,0 +1,240 @@
+---
+title: "Basic Usage"
+subtitle: "OLS with high-dimensional fixed effects"
+---
+
+## Overview
+
+This tutorial covers the fundamentals of using leanfe for fixed effects regression. You'll learn:
+
+- The formula syntax for specifying models
+- How fixed effects absorption works (FWL algorithm)
+- Different standard error options
+- Choosing between Polars and DuckDB backends
+
+## The Formula Syntax
+
+leanfe uses an intuitive formula syntax similar to R's `fixest` package:
+
+```
+y ~ x1 + x2 | fe1 + fe2
+```
+
+Where:
+- **Left side** (`y`): The dependent variable
+- **Right side before `|`** (`x1 + x2`): Independent variables (regressors)
+- **Right side after `|`** (`fe1 + fe2`): Fixed effects to absorb
+
+### Examples
+
+| Formula | Description |
+|---------|-------------|
+| `y ~ x` | Simple OLS, no fixed effects |
+| `y ~ x | firm` | One-way FE (firm) |
+| `y ~ x | firm + year` | Two-way FE (firm and year) |
+| `y ~ x1 + x2 | firm + year` | Multiple regressors, two-way FE |
+
+## How It Works: The FWL Algorithm
+
+leanfe uses the **Frisch-Waugh-Lovell (FWL) theorem** to efficiently handle high-dimensional fixed effects. Instead of creating thousands of dummy variables, FWL:
+
+1. **Demeans** the dependent variable and regressors within each fixed effect group
+2. **Runs OLS** on the demeaned data
+3. **Produces identical coefficients** to the full dummy variable approach
+
+This is dramatically faster and more memory-efficient for high-cardinality fixed effects.
+
+## Basic Example
+
+Let's run a two-way fixed effects regression on 1 million observations:
+
+```{python}
+#| echo: true
+#| output: true
+
+import numpy as np
+import polars as pl
+from leanfe import leanfe
+
+# Generate synthetic panel data
+np.random.seed(42)
+n_obs = 100_000  # 100K for fast tutorial builds
+n_firms = 500
+n_years = 10
+
+# Create data with known coefficients
+# True: treatment=2.5, x1=1.5, x2=0.8
+firm_fe = np.random.normal(0, 1, n_firms + 1)
+year_fe = np.random.normal(0, 0.5, n_years + 1)
+
+firm_id = np.random.randint(1, n_firms + 1, n_obs)
+year = np.random.randint(1, n_years + 1, n_obs)
+
+df = pl.DataFrame({
+    "firm_id": firm_id,
+    "year": year,
+    "treatment": np.random.binomial(1, 0.3, n_obs).astype(float),
+    "x1": np.random.normal(0, 1, n_obs),
+    "x2": np.random.normal(0, 1, n_obs),
+})
+
+# Generate y with true coefficients + fixed effects + noise
+df = df.with_columns(
+    y = (pl.lit(2.5) * pl.col("treatment") 
+         + pl.lit(1.5) * pl.col("x1") 
+         + pl.lit(0.8) * pl.col("x2")
+         + pl.lit(firm_fe[firm_id])
+         + pl.lit(year_fe[year])
+         + pl.lit(np.random.normal(0, 1, n_obs)))
+)
+
+print(f"Data shape: {df.shape}")
+```
+
+```{python}
+#| echo: true
+#| output: true
+
+# Run two-way fixed effects regression
+result = leanfe(
+    formula="y ~ treatment + x1 + x2 | firm_id + year",
+    data=df,
+    vcov="iid"
+)
+
+print("Coefficients (true values: treatment=2.5, x1=1.5, x2=0.8):")
+for var, coef in result['coefficients'].items():
+    se = result['std_errors'][var]
+    print(f"  {var}: {coef:.4f} (SE: {se:.4f})")
+```
+
+The estimated coefficients are very close to the true values!
+
+## Standard Errors
+
+leanfe supports three types of standard errors:
+
+### IID Standard Errors
+
+Assumes independent and identically distributed errors. Fastest but often inappropriate for panel data.
+
+```{python}
+#| echo: true
+#| output: true
+
+result_iid = leanfe(
+    formula="y ~ treatment + x1 + x2 | firm_id + year",
+    data=df,
+    vcov="iid"
+)
+print(f"IID SE for treatment: {result_iid['std_errors']['treatment']:.4f}")
+```
+
+### HC1 (Heteroskedasticity-Robust)
+
+Robust to heteroskedasticity. Uses the White (1980) correction.
+
+```{python}
+#| echo: true
+#| output: true
+
+result_hc1 = leanfe(
+    formula="y ~ treatment + x1 + x2 | firm_id + year",
+    data=df,
+    vcov="HC1"
+)
+print(f"HC1 SE for treatment: {result_hc1['std_errors']['treatment']:.4f}")
+```
+
+### Clustered Standard Errors
+
+Accounts for correlation within clusters. Essential for panel data.
+
+```{python}
+#| echo: true
+#| output: true
+
+# One-way clustering at firm level
+result_cluster = leanfe(
+    formula="y ~ treatment + x1 + x2 | firm_id + year",
+    data=df,
+    vcov="cluster",
+    cluster_cols=["firm_id"]
+)
+print(f"Clustered SE for treatment: {result_cluster['std_errors']['treatment']:.4f}")
+print(f"Number of clusters: {result_cluster['n_clusters']}")
+```
+
+### Multi-way Clustering
+
+Cluster on multiple dimensions simultaneously:
+
+```{python}
+#| echo: true
+#| output: true
+
+# Two-way clustering (firm and year)
+result_twoway = leanfe(
+    formula="y ~ treatment + x1 + x2 | firm_id + year",
+    data=df,
+    vcov="cluster",
+    cluster_cols=["firm_id", "year"]
+)
+print(f"Two-way clustered SE for treatment: {result_twoway['std_errors']['treatment']:.4f}")
+```
+
+## Choosing a Backend
+
+leanfe offers two backends:
+
+| Backend | Speed | Memory | Best For |
+|---------|-------|--------|----------|
+| **Polars** (default) | ⚡ Fastest | Higher | Data fits in RAM |
+| **DuckDB** | Slower | 💾 Minimal | Data larger than RAM |
+
+```{python}
+#| echo: true
+#| output: true
+
+import time
+
+# Polars backend (default)
+start = time.time()
+result_polars = leanfe(
+    formula="y ~ treatment + x1 + x2 | firm_id + year",
+    data=df,
+    vcov="iid",
+    backend="polars"
+)
+polars_time = time.time() - start
+
+# DuckDB backend
+start = time.time()
+result_duckdb = leanfe(
+    formula="y ~ treatment + x1 + x2 | firm_id + year",
+    data=df,
+    vcov="iid",
+    backend="duckdb"
+)
+duckdb_time = time.time() - start
+
+print(f"Polars: {polars_time:.2f}s")
+print(f"DuckDB: {duckdb_time:.2f}s")
+print(f"\nCoefficients match: {abs(result_polars['coefficients']['treatment'] - result_duckdb['coefficients']['treatment']) < 1e-6}")
+```
+
+## Summary
+
+- Use the formula syntax `y ~ x | fe1 + fe2` to specify models
+- leanfe uses FWL demeaning for efficient fixed effects absorption
+- Choose standard errors based on your data structure:
+  - `vcov="iid"` for simple cases
+  - `vcov="HC1"` for heteroskedasticity
+  - `vcov="cluster"` with `cluster_cols` for panel data
+- Use Polars backend for speed, DuckDB for memory efficiency
+
+## Next Steps
+
+- [Factor Variables](factor-variables.qmd) - Categorical regressors with `i()` syntax
+- [Standard Errors](standard-errors.qmd) - Deep dive into SE options
+- [Difference-in-Differences](did.qmd) - Causal inference with TWFE

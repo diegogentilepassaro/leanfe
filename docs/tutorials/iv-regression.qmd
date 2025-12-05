@@ -1,0 +1,218 @@
+---
+title: "IV Regression"
+subtitle: "Two-stage least squares with fixed effects"
+---
+
+## Overview
+
+Instrumental Variables (IV) regression addresses endogeneity—when your treatment variable is correlated with the error term. This tutorial covers:
+
+- The three-part formula syntax for IV
+- Understanding instruments, endogenous variables, and fixed effects
+- Instrument validity assumptions
+- Interpreting 2SLS coefficients
+
+## When to Use IV
+
+Use IV when you suspect **endogeneity**:
+
+- **Omitted variable bias**: Unobserved factors affect both treatment and outcome
+- **Reverse causality**: Outcome affects treatment
+- **Measurement error**: Treatment is measured with error
+
+## The Three-Part Formula
+
+leanfe uses a three-part formula for IV:
+
+```
+y ~ x | fe | z
+```
+
+Where:
+- **Part 1** (`y ~ x`): Outcome and endogenous variable(s)
+- **Part 2** (`fe`): Fixed effects to absorb
+- **Part 3** (`z`): Instrument(s)
+
+### Examples
+
+| Formula | Description |
+|---------|-------------|
+| `y ~ x \| fe \| z` | One endogenous var, one instrument |
+| `y ~ x1 + x2 \| fe \| z1 + z2` | Multiple instruments |
+| `y ~ endog + exog \| fe1 + fe2 \| z` | Exogenous controls + IV |
+
+## Example: Returns to Education
+
+Classic example: Estimating returns to education where education is endogenous (ability bias).
+
+```{python}
+#| echo: true
+#| output: true
+
+import numpy as np
+import polars as pl
+from leanfe import leanfe
+
+np.random.seed(42)
+n_obs = 50_000
+
+# Generate data with endogeneity
+# True effect of education on wages: 0.08 (8% per year)
+# But ability affects both education and wages (endogeneity)
+
+ability = np.random.normal(0, 1, n_obs)  # Unobserved
+instrument = np.random.normal(0, 1, n_obs)  # Distance to college (exogenous)
+
+# Education depends on ability AND instrument
+education = 12 + 0.5 * ability + 0.3 * instrument + np.random.normal(0, 1, n_obs)
+
+# Wages depend on education AND ability (omitted variable)
+true_return = 0.08
+log_wage = 2 + true_return * education + 0.2 * ability + np.random.normal(0, 0.5, n_obs)
+
+# Add fixed effects
+region = np.random.randint(1, 11, n_obs)
+year = np.random.randint(2015, 2025, n_obs)
+region_fe = np.random.normal(0, 0.1, 11)[region]
+year_fe = np.random.normal(0, 0.05, 11)[year - 2015]
+log_wage = log_wage + region_fe + year_fe
+
+df = pl.DataFrame({
+    "log_wage": log_wage,
+    "education": education,
+    "instrument": instrument,  # Distance to college
+    "region": region,
+    "year": year,
+})
+
+print(f"Data shape: {df.shape}")
+print(f"True return to education: {true_return}")
+```
+
+## OLS vs IV Comparison
+
+First, let's see the biased OLS estimate:
+
+```{python}
+#| echo: true
+#| output: true
+
+# OLS (biased due to omitted ability)
+result_ols = leanfe(
+    formula="log_wage ~ education | region + year",
+    data=df,
+    vcov="iid"
+)
+
+print("OLS Results (biased):")
+print(f"  Education coefficient: {result_ols['coefficients']['education']:.4f}")
+print(f"  Standard error: {result_ols['std_errors']['education']:.4f}")
+print(f"\nTrue effect: {true_return}")
+print("OLS is upward biased because ability affects both education and wages")
+```
+
+Now use IV to get consistent estimates:
+
+```{python}
+#| echo: true
+#| output: true
+
+# IV/2SLS (consistent)
+result_iv = leanfe(
+    formula="log_wage ~ education | region + year | instrument",
+    data=df,
+    vcov="iid"
+)
+
+print("IV/2SLS Results:")
+print(f"  Education coefficient: {result_iv['coefficients']['education']:.4f}")
+print(f"  Standard error: {result_iv['std_errors']['education']:.4f}")
+print(f"  Is IV: {result_iv['is_iv']}")
+print(f"  Number of instruments: {result_iv['n_instruments']}")
+print(f"\nTrue effect: {true_return}")
+```
+
+The IV estimate is closer to the true effect!
+
+## Instrument Validity
+
+For IV to work, instruments must satisfy two conditions:
+
+### 1. Relevance
+
+The instrument must be correlated with the endogenous variable:
+
+$$\text{Cov}(Z, X) \neq 0$$
+
+**Test**: First-stage F-statistic should be > 10 (rule of thumb)
+
+### 2. Exclusion Restriction
+
+The instrument affects the outcome **only through** the endogenous variable:
+
+$$\text{Cov}(Z, \epsilon) = 0$$
+
+**Cannot be tested directly** - requires economic reasoning
+
+## Multiple Instruments
+
+With multiple instruments, you can test for overidentification:
+
+```{python}
+#| echo: true
+#| output: true
+
+# Add a second instrument
+instrument2 = np.random.normal(0, 1, n_obs)
+education_new = 12 + 0.5 * ability + 0.3 * instrument + 0.2 * instrument2 + np.random.normal(0, 1, n_obs)
+log_wage_new = 2 + true_return * education_new + 0.2 * ability + np.random.normal(0, 0.5, n_obs)
+log_wage_new = log_wage_new + region_fe + year_fe
+
+df2 = df.with_columns([
+    pl.Series("instrument2", instrument2),
+    pl.Series("education", education_new),
+    pl.Series("log_wage", log_wage_new),
+])
+
+# IV with two instruments
+result_iv2 = leanfe(
+    formula="log_wage ~ education | region + year | instrument + instrument2",
+    data=df2,
+    vcov="iid"
+)
+
+print("IV with multiple instruments:")
+print(f"  Education coefficient: {result_iv2['coefficients']['education']:.4f}")
+print(f"  Number of instruments: {result_iv2['n_instruments']}")
+```
+
+## Interpreting 2SLS Coefficients
+
+The IV coefficient estimates the **Local Average Treatment Effect (LATE)**:
+
+- The effect for **compliers**: units whose treatment status is affected by the instrument
+- May differ from the Average Treatment Effect (ATE) if effects are heterogeneous
+
+## Summary
+
+| Component | Description |
+|-----------|-------------|
+| Formula | `y ~ endog \| fe \| instrument` |
+| Relevance | Instrument predicts endogenous variable |
+| Exclusion | Instrument affects outcome only through endogenous var |
+| Interpretation | LATE for compliers |
+
+## Common Instruments
+
+| Field | Endogenous Var | Common Instruments |
+|-------|----------------|-------------------|
+| Labor | Education | Distance to college, quarter of birth |
+| Trade | Imports | Geography, historical trade routes |
+| Finance | Credit | Regulatory changes, bank branches |
+| Health | Treatment | Physician preferences, distance |
+
+## Next Steps
+
+- [Large Datasets](../guides/large-datasets.qmd) - Scale IV to big data
+- [Benchmarks](../benchmarks/overview.qmd) - Performance comparisons
+- [API Reference](../reference/python.qmd) - Full function documentation

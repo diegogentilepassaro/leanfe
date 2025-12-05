@@ -1,0 +1,277 @@
+---
+title: "Get Started"
+subtitle: "Install leanfe and run your first regression in 5 minutes"
+---
+
+## Installation
+
+::: {.panel-tabset}
+
+### Python
+
+Install leanfe using pip:
+
+```bash
+pip install leanfe
+```
+
+Or install the latest development version from GitHub:
+
+```bash
+pip install git+https://github.com/diegogentilepassaro/leanfe.git#subdirectory=package/python
+```
+
+**Dependencies** (installed automatically):
+
+- `polars >= 0.19.0` - Fast DataFrame library
+- `duckdb >= 0.9.0` - Embedded analytical database
+- `numpy >= 1.20.0` - Numerical computing
+
+### R
+
+Install from GitHub using `remotes`:
+```r
+# Install remotes if needed
+install.packages("remotes")
+
+# Install leanfe
+remotes::install_github("diegogentilepassaro/leanfe", subdir = "package/r")
+```
+
+**Dependencies** (installed automatically):
+
+- `polars` - Fast DataFrame library for R
+- `duckdb` - Embedded analytical database
+- `arrow` - For parquet file support
+
+:::
+
+## Quick Start
+
+Let's run a fixed effects regression on synthetic panel data. This example uses 1 million observations to demonstrate leanfe's efficiency.
+
+### Generate Sample Data
+
+First, let's create some synthetic panel data:
+
+::: {.panel-tabset}
+
+### Python
+
+```{python}
+#| echo: true
+#| output: true
+
+import numpy as np
+import polars as pl
+
+# Set seed for reproducibility
+np.random.seed(42)
+
+# Generate 1M observations
+n_obs = 1_000_000
+n_firms = 1_000
+n_years = 20
+
+# Create panel structure
+df = pl.DataFrame({
+    "firm_id": np.random.randint(1, n_firms + 1, n_obs),
+    "year": np.random.randint(2000, 2000 + n_years, n_obs),
+    "treatment": np.random.binomial(1, 0.3, n_obs).astype(float),
+    "x1": np.random.normal(0, 1, n_obs),
+    "x2": np.random.normal(0, 1, n_obs),
+})
+
+# Generate outcome with known coefficients
+# True effect: treatment=2.5, x1=1.5, x2=0.8
+firm_fe = np.random.normal(0, 1, n_firms + 1)[df["firm_id"].to_numpy()]
+year_fe = np.random.normal(0, 0.5, n_years + 1)[df["year"].to_numpy() - 2000]
+error = np.random.normal(0, 1, n_obs)
+
+df = df.with_columns(
+    y = pl.lit(2.5) * pl.col("treatment") 
+      + pl.lit(1.5) * pl.col("x1") 
+      + pl.lit(0.8) * pl.col("x2")
+      + pl.lit(firm_fe) 
+      + pl.lit(year_fe) 
+      + pl.lit(error)
+)
+
+print(f"Dataset shape: {df.shape}")
+print(f"Columns: {df.columns}")
+df.head(5)
+```
+
+### R
+
+```r
+library(dplyr)
+
+# Set seed for reproducibility
+set.seed(42)
+
+# Generate 1M observations
+n_obs <- 1000000
+n_firms <- 1000
+n_years <- 20
+
+# Create panel structure
+df <- tibble(
+  firm_id = sample(1:n_firms, n_obs, replace = TRUE),
+  year = sample(2000:(2000 + n_years - 1), n_obs, replace = TRUE),
+  treatment = rbinom(n_obs, 1, 0.3),
+  x1 = rnorm(n_obs),
+  x2 = rnorm(n_obs)
+)
+
+# Generate outcome with known coefficients
+# True effect: treatment=2.5, x1=1.5, x2=0.8
+firm_fe <- rnorm(n_firms + 1)[df$firm_id]
+year_fe <- rnorm(n_years + 1, sd = 0.5)[df$year - 1999]
+error <- rnorm(n_obs)
+
+df <- df %>%
+  mutate(y = 2.5 * treatment + 1.5 * x1 + 0.8 * x2 + firm_fe + year_fe + error)
+
+cat("Dataset shape:", nrow(df), "x", ncol(df), "\n")
+head(df)
+```
+
+:::
+
+### Run Fixed Effects Regression
+
+Now let's estimate the model with two-way fixed effects (firm and year):
+
+::: {.panel-tabset}
+
+### Python
+
+```{python}
+#| echo: true
+#| output: true
+
+from leanfe import leanfe
+
+# Two-way fixed effects regression
+# Formula: y ~ treatment + x1 + x2 | firm_id + year
+result = leanfe(
+    formula="y ~ treatment + x1 + x2 | firm_id + year",
+    data=df,
+    vcov="iid"  # IID standard errors
+)
+
+print(result)
+```
+
+### R
+
+```r
+library(leanfe)
+
+# Two-way fixed effects regression
+result <- leanfe(
+    formula = "y ~ treatment + x1 + x2 | firm_id + year",
+    data = df,
+    vcov = "iid"
+)
+
+print(result)
+```
+
+:::
+
+The estimated coefficients should be close to the true values: `treatment ≈ 2.5`, `x1 ≈ 1.5`, `x2 ≈ 0.8`.
+
+### Clustered Standard Errors
+
+For panel data, you typically want clustered standard errors. leanfe supports two-way clustering:
+
+::: {.panel-tabset}
+
+### Python
+
+```{python}
+#| echo: true
+#| output: true
+
+# Two-way clustering (firm and year)
+result_clustered = leanfe(
+    formula="y ~ treatment + x1 + x2 | firm_id + year",
+    data=df,
+    vcov="cluster",
+    cluster_cols=["firm_id", "year"]
+)
+
+print(result_clustered)
+```
+
+### R
+
+```r
+# Two-way clustering (firm and year)
+result_clustered <- leanfe(
+    formula = "y ~ treatment + x1 + x2 | firm_id + year",
+    data = df,
+    vcov = "cluster",
+    cluster_cols = c("firm_id", "year")
+)
+
+print(result_clustered)
+```
+
+:::
+
+### Choose Your Backend
+
+leanfe offers two backends optimized for different scenarios:
+
+| Backend | Best For | Trade-off |
+|---------|----------|-----------|
+| **Polars** (default) | Speed | Requires data to fit in memory |
+| **DuckDB** | Large datasets | Slightly slower, but minimal memory |
+
+::: {.panel-tabset}
+
+### Python
+
+```{python}
+#| echo: true
+#| output: true
+
+# Use DuckDB backend for memory efficiency
+result_duckdb = leanfe(
+    formula="y ~ treatment + x1 + x2 | firm_id + year",
+    data=df,
+    vcov="iid",
+    backend="duckdb"  # Use DuckDB instead of Polars
+)
+
+print(result_duckdb)
+```
+
+### R
+
+```r
+# Use DuckDB backend for memory efficiency
+result_duckdb <- leanfe(
+    formula = "y ~ treatment + x1 + x2 | firm_id + year",
+    data = df,
+    vcov = "iid",
+    backend = "duckdb"
+)
+
+print(result_duckdb)
+```
+
+:::
+
+## Next Steps
+
+Now that you've run your first regression, explore more features:
+
+- **[Basic Usage Tutorial](tutorials/basic-usage.qmd)** - Deep dive into formula syntax and options
+- **[Standard Errors](tutorials/standard-errors.qmd)** - IID, HC1, and clustered SE options
+- **[Factor Variables](tutorials/factor-variables.qmd)** - Categorical regressors with `i()` syntax
+- **[Difference-in-Differences](tutorials/did.qmd)** - Causal inference with TWFE
+- **[Large Datasets Guide](guides/large-datasets.qmd)** - Working with data larger than RAM

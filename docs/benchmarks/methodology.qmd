@@ -1,0 +1,252 @@
+---
+title: "Benchmark Methodology"
+subtitle: "Transparent and reproducible performance testing"
+---
+
+## Overview
+
+This page documents our benchmark methodology to ensure transparency and reproducibility. All benchmarks can be reproduced using the provided scripts.
+
+## Data Generation
+
+### Synthetic Panel Data
+
+Benchmarks use synthetic panel data with known properties:
+
+```python
+import numpy as np
+import polars as pl
+
+def generate_benchmark_data(n_obs, n_fe1=1000, n_fe2=500, seed=42):
+    """Generate synthetic benchmark data."""
+    np.random.seed(seed)
+    
+    # Fixed effect IDs
+    fe1 = np.random.randint(1, n_fe1 + 1, n_obs)
+    fe2 = np.random.randint(1, n_fe2 + 1, n_obs)
+    
+    # Fixed effect values
+    fe1_effects = np.random.normal(0, 1, n_fe1 + 1)[fe1]
+    fe2_effects = np.random.normal(0, 0.5, n_fe2 + 1)[fe2]
+    
+    # Regressors
+    treatment = np.random.binomial(1, 0.3, n_obs).astype(float)
+    x1 = np.random.normal(0, 1, n_obs)
+    
+    # Outcome: y = 2.5*treatment + 1.5*x1 + fe1 + fe2 + noise
+    y = (2.5 * treatment + 1.5 * x1 + 
+         fe1_effects + fe2_effects + 
+         np.random.normal(0, 1, n_obs))
+    
+    return pl.DataFrame({
+        "y": y,
+        "treatment": treatment,
+        "x1": x1,
+        "fe1": fe1,
+        "fe2": fe2,
+    })
+```
+
+### Data Characteristics
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| True treatment effect | 2.5 | Known ground truth for validation |
+| True x1 effect | 1.5 | Known ground truth for validation |
+| FE1 cardinality | 1,000 | High-dimensional (e.g., firms) |
+| FE2 cardinality | 500 | Medium-dimensional (e.g., products) |
+| Treatment probability | 0.3 | Realistic treatment assignment |
+| Error variance | 1.0 | Standard normal errors |
+| Seed | 42 | Reproducibility |
+
+### Dataset Sizes
+
+| Size | Observations | Approximate File Size |
+|------|--------------|----------------------|
+| Small | 100,000 | ~5 MB |
+| Medium | 500,000 | ~25 MB |
+| Large | 1,000,000 | ~50 MB |
+| XL | 5,000,000 | ~250 MB |
+| XXL | 10,000,000 | ~500 MB |
+
+## Hardware and Software
+
+### Test Environment
+
+Benchmarks were run on:
+
+- **Machine**: Apple MacBook Pro
+- **Processor**: Apple M-series
+- **RAM**: 16 GB
+- **OS**: macOS
+
+### Software Versions
+
+```{python}
+#| echo: true
+#| output: true
+
+import sys
+import polars
+import duckdb
+import numpy
+
+print("Software Versions:")
+print(f"  Python: {sys.version.split()[0]}")
+print(f"  Polars: {polars.__version__}")
+print(f"  DuckDB: {duckdb.__version__}")
+print(f"  NumPy: {numpy.__version__}")
+```
+
+## Measurement Methodology
+
+### Time Measurement
+
+```python
+import time
+
+start = time.time()
+result = leanfe(...)
+elapsed = time.time() - start
+```
+
+- **Metric**: Wall-clock time in seconds
+- **Iterations**: 3 runs per configuration
+- **Reported**: Mean time across iterations
+
+### Memory Measurement
+
+```python
+import tracemalloc
+
+tracemalloc.start()
+result = leanfe(...)
+current, peak = tracemalloc.get_traced_memory()
+tracemalloc.stop()
+```
+
+- **Metric**: Peak memory usage in MB
+- **Note**: Measures Python heap only, not total process memory
+
+## Validation
+
+### Coefficient Matching
+
+All benchmarks verify that packages produce matching coefficients:
+
+```python
+tolerance = 1e-6
+
+polars_coef = result_polars['coefficients']['treatment']
+duckdb_coef = result_duckdb['coefficients']['treatment']
+
+assert abs(polars_coef - duckdb_coef) < tolerance
+```
+
+### Ground Truth Comparison
+
+With known true coefficients (treatment=2.5, x1=1.5), we verify estimates are close:
+
+```{python}
+#| echo: true
+#| output: true
+
+import numpy as np
+import polars as pl
+from leanfe import leanfe
+
+# Generate data with known coefficients
+np.random.seed(42)
+n = 100_000
+
+fe1 = np.random.randint(1, 501, n)
+fe2 = np.random.randint(1, 101, n)
+fe1_effects = np.random.normal(0, 1, 501)[fe1]
+fe2_effects = np.random.normal(0, 0.5, 101)[fe2]
+
+treatment = np.random.binomial(1, 0.3, n).astype(float)
+x1 = np.random.normal(0, 1, n)
+
+# True coefficients: treatment=2.5, x1=1.5
+y = 2.5 * treatment + 1.5 * x1 + fe1_effects + fe2_effects + np.random.normal(0, 1, n)
+
+df = pl.DataFrame({"y": y, "treatment": treatment, "x1": x1, "fe1": fe1, "fe2": fe2})
+
+result = leanfe(formula="y ~ treatment + x1 | fe1 + fe2", data=df, vcov="iid")
+
+print("Ground Truth Validation:")
+print(f"  True treatment: 2.5, Estimated: {result['coefficients']['treatment']:.4f}")
+print(f"  True x1: 1.5, Estimated: {result['coefficients']['x1']:.4f}")
+```
+
+## Limitations and Caveats
+
+### What These Benchmarks Show
+
+✅ Relative performance between leanfe backends
+✅ Scaling behavior with dataset size
+✅ Memory efficiency of DuckDB backend
+
+### What These Benchmarks Don't Show
+
+❌ Comparison with PyFixest/fixest (different feature sets)
+❌ Performance on real-world data (may vary)
+❌ GPU acceleration (not implemented)
+
+### Known Limitations
+
+1. **Synthetic data**: Real data may have different characteristics
+2. **Single machine**: Results may vary on different hardware
+3. **Python overhead**: Timing includes Python interpreter overhead
+4. **Memory measurement**: tracemalloc may underestimate total memory
+
+## Reproducible Scripts
+
+### Download Benchmark Code
+
+The complete benchmark suite is available in the repository:
+
+```bash
+# Clone repository
+git clone https://github.com/diegogentilepassaro/leanfe.git
+
+# Navigate to benchmarks
+cd leanfe/package/docs/benchmarks
+
+# Run benchmarks
+python benchmark_runner.py
+```
+
+### Quick Benchmark
+
+```python
+from leanfe import leanfe
+import numpy as np
+import polars as pl
+import time
+
+# Generate data
+np.random.seed(42)
+n = 1_000_000
+df = pl.DataFrame({
+    "y": np.random.normal(0, 1, n),
+    "x": np.random.normal(0, 1, n),
+    "fe1": np.random.randint(1, 1001, n),
+    "fe2": np.random.randint(1, 501, n),
+})
+
+# Benchmark Polars
+start = time.time()
+leanfe("y ~ x | fe1 + fe2", df, backend="polars")
+print(f"Polars: {time.time() - start:.2f}s")
+
+# Benchmark DuckDB
+start = time.time()
+leanfe("y ~ x | fe1 + fe2", df, backend="duckdb")
+print(f"DuckDB: {time.time() - start:.2f}s")
+```
+
+## See Also
+
+- [Benchmark Results](overview.qmd)
+- [Large Datasets Guide](../guides/large-datasets.qmd)

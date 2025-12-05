@@ -1,0 +1,195 @@
+---
+title: "leanfe"
+subtitle: "Lean, Fast Fixed Effects Regression"
+page-layout: full
+toc: false
+---
+
+::: {.hero-banner}
+
+# 🍃💨 leanfe
+
+### Lean, Fast Fixed Effects Regression for Python and R
+
+High-dimensional fixed effects regression that's **fast** when you need speed, and **memory-efficient** when you're working with data larger than RAM.
+
+::: {.hero-buttons}
+[Get Started](get-started.qmd){.btn .btn-primary .btn-lg}
+[View on GitHub](https://github.com/diegogentilepassaro/leanfe){.btn .btn-outline-secondary .btn-lg}
+:::
+
+:::
+
+## Why leanfe?
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6 .g-col-lg-3}
+### ⚡ Speed
+**Polars backend** delivers blazing fast performance for in-memory datasets. Process millions of observations in seconds.
+:::
+
+::: {.g-col-12 .g-col-md-6 .g-col-lg-3}
+### 💾 Memory Efficient
+**DuckDB backend** processes datasets larger than RAM by streaming from disk. Memory usage stays low regardless of dataset size.
+:::
+
+::: {.g-col-12 .g-col-md-6 .g-col-lg-3}
+### 🔄 Unified API
+**Same syntax** in Python and R. Switch languages without relearning. The API works identically in both.
+:::
+
+::: {.g-col-12 .g-col-md-6 .g-col-lg-3}
+### 📊 Complete Features
+**Full econometrics toolkit**: clustered standard errors, factor variables, interactions, IV/2SLS, and more.
+:::
+
+:::
+
+## Quick Example
+
+Two-way fixed effects regression with clustered standard errors:
+
+::: {.panel-tabset}
+
+### Python (Polars)
+
+```python
+from leanfe import leanfe
+
+# Fast in-memory computation (default)
+result = leanfe(
+    formula="outcome ~ treatment + controls | unit_id + time_id",
+    data=df,
+    vcov="cluster",
+    cluster_cols=["unit_id"],
+    backend="polars"  # default, fastest
+)
+```
+
+### Python (DuckDB)
+
+```python
+from leanfe import leanfe
+
+# Memory-efficient, can handle data larger than RAM
+result = leanfe(
+    formula="outcome ~ treatment + controls | unit_id + time_id",
+    data="large_data.parquet",  # read directly from file
+    vcov="cluster",
+    cluster_cols=["unit_id"],
+    backend="duckdb"  # low memory usage
+)
+```
+
+### R (Polars)
+
+```r
+library(leanfe)
+
+# Fast in-memory computation (default)
+result <- leanfe(
+    formula = "outcome ~ treatment + controls | unit_id + time_id",
+    data = df,
+    vcov = "cluster",
+    cluster_cols = c("unit_id"),
+    backend = "polars"
+)
+```
+
+### R (DuckDB)
+
+```r
+library(leanfe)
+
+# Memory-efficient, can handle data larger than RAM
+result <- leanfe(
+    formula = "outcome ~ treatment + controls | unit_id + time_id",
+    data = "large_data.parquet",
+    vcov = "cluster",
+    cluster_cols = c("unit_id"),
+    backend = "duckdb"
+)
+```
+
+:::
+
+## Performance
+
+**Polars is faster, DuckDB uses far less memory.** Choose your backend based on your needs. DuckDB can process datasets larger than available RAM by streaming from disk.
+
+### Python
+
+| Dataset Size | Backend | Run Time | Peak Memory |
+|-------------|---------|----------|-------------|
+| 1M obs | Polars | ~2 sec | ~150 MB |
+| 1M obs | DuckDB | ~5 sec | ~50 MB |
+| 5M obs | Polars | ~8 sec | ~600 MB |
+| 5M obs | DuckDB | ~20 sec | ~100 MB |
+| 10M obs | Polars | ~15 sec | ~1.2 GB |
+| 10M obs | DuckDB | ~40 sec | ~150 MB |
+
+### R
+
+| Dataset Size | Backend | Run Time | Peak Memory |
+|-------------|---------|----------|-------------|
+| 1M obs | Polars | ~3 sec | ~180 MB |
+| 1M obs | DuckDB | ~6 sec | ~60 MB |
+| 5M obs | Polars | ~10 sec | ~700 MB |
+| 5M obs | DuckDB | ~25 sec | ~120 MB |
+| 10M obs | Polars | ~18 sec | ~1.4 GB |
+| 10M obs | DuckDB | ~50 sec | ~180 MB |
+
+[View detailed benchmarks →](benchmarks/overview.qmd)
+
+## Installation
+
+::: {.panel-tabset}
+
+### Python
+
+```bash
+pip install leanfe
+```
+
+Or install from source:
+
+```bash
+pip install git+https://github.com/diegogentilepassaro/leanfe.git#subdirectory=package/python
+```
+
+### R
+
+```r
+# Install from GitHub
+remotes::install_github("diegogentilepassaro/leanfe", subdir = "package/r")
+```
+
+:::
+
+## Ready to dive in?
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-4}
+### 📖 Tutorials
+Step-by-step guides for common use cases: DiD, event studies, IV regression.
+
+[Browse tutorials →](tutorials/basic-usage.qmd)
+:::
+
+::: {.g-col-12 .g-col-md-4}
+### 📚 API Reference
+Complete documentation of all functions and parameters.
+
+[Python API](reference/python.qmd) | [R API](reference/r.qmd)
+:::
+
+::: {.g-col-12 .g-col-md-4}
+### 🔬 Benchmarks
+Reproducible performance comparisons with PyFixest and fixest.
+
+[View benchmarks →](benchmarks/overview.qmd)
+:::
+
+:::

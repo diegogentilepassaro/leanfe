@@ -1,0 +1,211 @@
+---
+title: "Python API Reference"
+subtitle: "Complete documentation of leanfe Python functions"
+---
+
+## leanfe
+
+The main function for fixed effects regression.
+
+```python
+from leanfe import leanfe
+
+result = leanfe(
+    data,
+    y_col=None,
+    x_cols=None,
+    fe_cols=None,
+    formula=None,
+    weights=None,
+    demean_tol=1e-3,
+    n_iter=100,
+    vcov="iid",
+    cluster_cols=None,
+    ssc=False,
+    sample_frac=None,
+    backend="polars"
+)
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `data` | `str` or `pl.DataFrame` | *required* | Input data: Polars DataFrame or path to parquet file |
+| `y_col` | `str` | `None` | Dependent variable column (optional if formula provided) |
+| `x_cols` | `list[str]` | `None` | Independent variable columns (optional if formula provided) |
+| `fe_cols` | `list[str]` | `None` | Fixed effect columns (optional if formula provided) |
+| `formula` | `str` | `None` | R-style formula: `"y ~ x1 + x2 | fe1 + fe2"` |
+| `weights` | `str` | `None` | Column name for regression weights (WLS) |
+| `demean_tol` | `float` | `1e-3` | Convergence tolerance for iterative demeaning |
+| `n_iter` | `int` | `100` | Maximum iterations for demeaning |
+| `vcov` | `str` | `"iid"` | Variance estimator: `"iid"`, `"HC1"`, or `"cluster"` |
+| `cluster_cols` | `list[str]` | `None` | Clustering variables (required if `vcov="cluster"`) |
+| `ssc` | `bool` | `False` | Small sample correction for clustered SEs |
+| `sample_frac` | `float` | `None` | Fraction of data to sample (e.g., 0.1 for 10%) |
+| `backend` | `str` | `"polars"` | Computation backend: `"polars"` or `"duckdb"` |
+
+### Returns
+
+A dictionary containing:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `coefficients` | `dict[str, float]` | Variable names → coefficient estimates |
+| `std_errors` | `dict[str, float]` | Variable names → standard errors |
+| `n_obs` | `int` | Number of observations used |
+| `iterations` | `int` | Number of demeaning iterations |
+| `vcov_type` | `str` | Type of variance estimator used |
+| `is_iv` | `bool` | Whether IV/2SLS was used |
+| `n_instruments` | `int` | Number of instruments (if IV) |
+| `n_clusters` | `int` | Number of clusters (if clustered SEs) |
+
+### Formula Syntax
+
+The formula follows R-style syntax with extensions:
+
+```
+y ~ x1 + x2 | fe1 + fe2 | z1 + z2
+│    │         │           │
+│    │         │           └── Instruments (optional, for IV)
+│    │         └── Fixed effects to absorb
+│    └── Independent variables
+└── Dependent variable
+```
+
+**Special syntax:**
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `i(var)` | Factor variable expansion | `i(region)` |
+| `i(var, ref='val')` | Custom reference category | `i(region, ref='North')` |
+| `x:i(var)` | Interaction with factor | `treatment:i(region)` |
+
+### Examples
+
+#### Basic Usage
+
+```{python}
+#| echo: true
+#| output: true
+
+import numpy as np
+import polars as pl
+from leanfe import leanfe
+
+# Generate sample data
+np.random.seed(42)
+n = 10_000
+
+df = pl.DataFrame({
+    "y": np.random.normal(0, 1, n),
+    "treatment": np.random.binomial(1, 0.3, n).astype(float),
+    "x1": np.random.normal(0, 1, n),
+    "firm_id": np.random.randint(1, 101, n),
+    "year": np.random.randint(2015, 2025, n),
+})
+
+# Basic two-way fixed effects
+result = leanfe(
+    formula="y ~ treatment + x1 | firm_id + year",
+    data=df,
+    vcov="iid"
+)
+
+print("Coefficients:", result['coefficients'])
+print("Standard Errors:", result['std_errors'])
+print("N:", result['n_obs'])
+```
+
+#### Clustered Standard Errors
+
+```{python}
+#| echo: true
+#| output: true
+
+result_cluster = leanfe(
+    formula="y ~ treatment + x1 | firm_id + year",
+    data=df,
+    vcov="cluster",
+    cluster_cols=["firm_id"]
+)
+
+print("Clustered SEs:", result_cluster['std_errors'])
+print("Number of clusters:", result_cluster['n_clusters'])
+```
+
+#### Using DuckDB Backend
+
+```{python}
+#| echo: true
+#| output: true
+
+result_duckdb = leanfe(
+    formula="y ~ treatment + x1 | firm_id + year",
+    data=df,
+    vcov="iid",
+    backend="duckdb"
+)
+
+print("DuckDB result:", result_duckdb['coefficients'])
+```
+
+#### Instrumental Variables
+
+```{python}
+#| echo: true
+#| output: true
+
+# Add instrument
+df = df.with_columns(
+    instrument = pl.Series(np.random.normal(0, 1, n))
+)
+
+result_iv = leanfe(
+    formula="y ~ treatment | firm_id + year | instrument",
+    data=df,
+    vcov="iid"
+)
+
+print("IV result:", result_iv['coefficients'])
+print("Is IV:", result_iv['is_iv'])
+print("N instruments:", result_iv['n_instruments'])
+```
+
+#### Weighted Regression
+
+```{python}
+#| echo: true
+#| output: true
+
+# Add weights
+df = df.with_columns(
+    weight = pl.Series(np.abs(np.random.normal(1, 0.3, n)))
+)
+
+result_wls = leanfe(
+    formula="y ~ treatment + x1 | firm_id + year",
+    data=df,
+    weights="weight",
+    vcov="iid"
+)
+
+print("WLS result:", result_wls['coefficients'])
+```
+
+## Module Structure
+
+```
+leanfe/
+├── __init__.py          # Exports leanfe
+├── fast_feols.py        # Main entry point
+├── polars_impl.py       # Polars backend implementation
+├── duckdb_impl.py       # DuckDB backend implementation
+└── common.py            # Shared utilities
+```
+
+## See Also
+
+- [Basic Usage Tutorial](../tutorials/basic-usage.qmd)
+- [R API Reference](r.qmd)
+- [Benchmarks](../benchmarks/overview.qmd)

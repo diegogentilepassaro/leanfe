@@ -1,0 +1,73 @@
+project:
+  type: website
+  output-dir: _site
+
+website:
+  title: "leanfe"
+  description: "Lean, Fast Fixed Effects Regression for Python and R"
+  navbar:
+    background: primary
+    left:
+      - text: "Home"
+        href: index.qmd
+      - text: "Get Started"
+        href: get-started.qmd
+      - text: "Tutorials"
+        menu:
+          - text: "Basic Usage"
+            href: tutorials/basic-usage.qmd
+          - text: "Factor Variables"
+            href: tutorials/factor-variables.qmd
+          - text: "Standard Errors"
+            href: tutorials/standard-errors.qmd
+          - text: "Difference-in-Differences"
+            href: tutorials/did.qmd
+          - text: "Event Studies"
+            href: tutorials/event-study.qmd
+          - text: "IV Regression"
+            href: tutorials/iv-regression.qmd
+      - text: "Guides"
+        menu:
+          - text: "Large Datasets"
+            href: guides/large-datasets.qmd
+      - text: "Benchmarks"
+        menu:
+          - text: "Overview"
+            href: benchmarks/overview.qmd
+          - text: "Methodology"
+            href: benchmarks/methodology.qmd
+      - text: "Reference"
+        menu:
+          - text: "Python API"
+            href: reference/python.qmd
+          - text: "R API"
+            href: reference/r.qmd
+    right:
+      - icon: github
+        href: https://github.com/diegogp/leanfe
+  search: true
+  page-footer:
+    center: "Copyright 2024, leanfe contributors"
+
+format:
+  html:
+    theme: cosmo
+    css: styles.css
+    toc: true
+    code-copy: true
+    code-overflow: wrap
+    highlight-style: github
+
+# Python code execution via Jupyter
+jupyter: python3
+
+# R code execution via knitr
+knitr:
+  opts_chunk:
+    echo: true
+    message: false
+    warning: false
+
+execute:
+  freeze: auto
+  cache: false

@@ -1,0 +1,221 @@
+---
+title: "Difference-in-Differences"
+subtitle: "Causal inference with two-way fixed effects"
+---
+
+## Overview
+
+Difference-in-Differences (DiD) is a powerful method for estimating causal effects when you have panel data with a treatment that affects some units but not others. This tutorial covers:
+
+- Classic two-way fixed effects (TWFE) specification
+- Proper clustering for inference
+- Interpreting treatment effects
+- Limitations and considerations
+
+## The DiD Setup
+
+DiD requires:
+
+1. **Panel data**: Multiple units observed over multiple time periods
+2. **Treatment variation**: Some units get treated, others don't
+3. **Parallel trends**: Treated and control units would have followed similar trends absent treatment
+
+## TWFE Specification
+
+The classic DiD model with two-way fixed effects:
+
+```
+y ~ treated_post | unit + time
+```
+
+Where:
+- `y`: Outcome variable
+- `treated_post`: Indicator = 1 for treated units after treatment, 0 otherwise
+- `unit`: Unit fixed effects (absorb time-invariant unit characteristics)
+- `time`: Time fixed effects (absorb common time shocks)
+
+The coefficient on `treated_post` is the **average treatment effect on the treated (ATT)**.
+
+## Example: Policy Evaluation
+
+Let's simulate a policy that affects some states starting in 2020:
+
+```{python}
+#| echo: true
+#| output: true
+
+import numpy as np
+import polars as pl
+from leanfe import leanfe
+
+np.random.seed(42)
+
+# Setup: 50 states, 10 years (2015-2024)
+n_states = 50
+years = list(range(2015, 2025))
+n_years = len(years)
+
+# 20 states get treated starting in 2020
+treated_states = list(range(1, 21))  # States 1-20 are treated
+treatment_year = 2020
+true_effect = 3.0  # True treatment effect
+
+# Generate panel
+data = []
+for state in range(1, n_states + 1):
+    state_fe = np.random.normal(0, 2)  # State fixed effect
+    for year in years:
+        year_fe = np.random.normal(0, 0.5)  # Year fixed effect
+        
+        # Treatment indicator
+        treated_post = 1 if (state in treated_states and year >= treatment_year) else 0
+        
+        # Outcome: y = true_effect * treated_post + state_fe + year_fe + noise
+        y = true_effect * treated_post + state_fe + year_fe + np.random.normal(0, 1)
+        
+        data.append({
+            "state_id": state,
+            "year": year,
+            "treated_post": float(treated_post),
+            "y": y
+        })
+
+df = pl.DataFrame(data)
+print(f"Panel: {df.shape[0]} observations ({n_states} states × {n_years} years)")
+print(f"Treated states: {len(treated_states)}")
+print(f"Treatment year: {treatment_year}")
+```
+
+```{python}
+#| echo: true
+#| output: true
+
+# Estimate DiD with TWFE
+result = leanfe(
+    formula="y ~ treated_post | state_id + year",
+    data=df,
+    vcov="iid"
+)
+
+print(f"True treatment effect: {true_effect}")
+print(f"Estimated effect: {result['coefficients']['treated_post']:.4f}")
+print(f"Standard error: {result['std_errors']['treated_post']:.4f}")
+```
+
+## Clustering Standard Errors
+
+For DiD, you should cluster standard errors at the **treatment unit level** (the level at which treatment varies):
+
+```{python}
+#| echo: true
+#| output: true
+
+# Cluster at state level (treatment varies by state)
+result_clustered = leanfe(
+    formula="y ~ treated_post | state_id + year",
+    data=df,
+    vcov="cluster",
+    cluster_cols=["state_id"]
+)
+
+print("With clustered standard errors:")
+print(f"Estimated effect: {result_clustered['coefficients']['treated_post']:.4f}")
+print(f"Clustered SE: {result_clustered['std_errors']['treated_post']:.4f}")
+print(f"Number of clusters: {result_clustered['n_clusters']}")
+```
+
+Notice the clustered SE is typically larger than the IID SE, reflecting the correlation within states.
+
+## Adding Covariates
+
+You can include time-varying covariates:
+
+```{python}
+#| echo: true
+#| output: true
+
+# Add a covariate
+x1_vals = np.random.normal(0, 1, len(df))
+df = df.with_columns(x1 = pl.Series(x1_vals))
+
+# Regenerate y with covariate effect
+np.random.seed(42)
+state_fes = {s: np.random.normal(0, 2) for s in range(1, n_states + 1)}
+year_fes = {y: np.random.normal(0, 0.5) for y in years}
+
+y_new = []
+x1_list = df["x1"].to_list()
+treated_list = df["treated_post"].to_list()
+state_list = df["state_id"].to_list()
+year_list = df["year"].to_list()
+
+for i in range(len(df)):
+    treated_post = treated_list[i]
+    state_fe = state_fes[state_list[i]]
+    year_fe = year_fes[year_list[i]]
+    x1 = x1_list[i]
+    y = true_effect * treated_post + 0.5 * x1 + state_fe + year_fe + np.random.normal(0, 1)
+    y_new.append(y)
+
+df = df.with_columns(y = pl.Series(y_new))
+
+# Estimate with covariate
+result_cov = leanfe(
+    formula="y ~ treated_post + x1 | state_id + year",
+    data=df,
+    vcov="cluster",
+    cluster_cols=["state_id"]
+)
+
+print("With covariate:")
+for var, coef in result_cov['coefficients'].items():
+    se = result_cov['std_errors'][var]
+    print(f"  {var}: {coef:.4f} (SE: {se:.4f})")
+```
+
+## Interpreting the Treatment Effect
+
+The `treated_post` coefficient represents:
+
+- **ATT (Average Treatment Effect on the Treated)**: The average effect of treatment on units that received it
+- **Interpretation**: "Being in a treated state after the policy increased y by X units"
+
+## Limitations: Staggered Adoption
+
+⚠️ **Important**: The classic TWFE estimator can be biased when:
+
+1. **Treatment timing varies** across units (staggered adoption)
+2. **Treatment effects are heterogeneous** across units or time
+
+In these cases, already-treated units can serve as "controls" for newly-treated units, leading to negative weights and bias.
+
+### When TWFE Works Well
+
+- All treated units receive treatment at the same time
+- Treatment effects are homogeneous
+- Parallel trends assumption holds
+
+### When to Use Alternative Estimators
+
+For staggered adoption with heterogeneous effects, consider:
+
+- Callaway & Sant'Anna (2021)
+- Sun & Abraham (2021)
+- de Chaisemartin & D'Haultfœuille (2020)
+
+These are not currently implemented in leanfe but can be used alongside it.
+
+## Summary
+
+| Component | Recommendation |
+|-----------|----------------|
+| Formula | `y ~ treated_post \| unit + time` |
+| Standard errors | Cluster at treatment unit level |
+| Interpretation | ATT for treated units post-treatment |
+| Caution | Check for staggered adoption issues |
+
+## Next Steps
+
+- [Event Studies](event-study.qmd) - Examine dynamic treatment effects
+- [IV Regression](iv-regression.qmd) - Address endogeneity
+- [Large Datasets](../guides/large-datasets.qmd) - Scale to big data

@@ -1,0 +1,23 @@
+Package: leanfe
+Type: Package
+Title: Lean Fixed Effects Regression
+Version: 0.1.0
+Authors@R: person("Diego", "Gentile Passaro", email = "diegogentilepassaro@gmail.com", role = c("aut", "cre"))
+Description: Lean, fast fixed effects regression using Polars and DuckDB.
+    Implements the Frisch-Waugh-Lovell theorem for absorbing fixed effects with support
+    for IID, HC1 (robust), and clustered standard errors. Optimized for speed and
+    memory efficiency on large datasets (10M+ observations).
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Depends: 
+    R (>= 3.6.0)
+Imports:
+    polars (>= 0.8.0),
+    duckdb (>= 0.9.0),
+    DBI
+Suggests:
+    testthat (>= 3.0.0)
+RoxygenNote: 7.2.0
+URL: https://github.com/diegogentilepassaro/leanfe
+BugReports: https://github.com/diegogentilepassaro/leanfe/issues

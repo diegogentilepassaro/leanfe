@@ -1,0 +1,221 @@
+---
+title: "R API Reference"
+subtitle: "Complete documentation of leanfe R functions"
+---
+
+## leanfe
+
+The main function for fixed effects regression in R.
+
+```r
+library(leanfe)
+
+result <- leanfe(
+    data,
+    y_col = NULL,
+    x_cols = NULL,
+    fe_cols = NULL,
+    formula = NULL,
+    weights = NULL,
+    demean_tol = 1e-3,
+    n_iter = 100,
+    vcov = "iid",
+    cluster_cols = NULL,
+    ssc = FALSE,
+    sample_frac = NULL,
+    backend = "polars"
+)
+```
+
+### Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `data` | `character` or `data.frame` | *required* | Input data: data frame or path to parquet file |
+| `y_col` | `character` | `NULL` | Dependent variable column (optional if formula provided) |
+| `x_cols` | `character vector` | `NULL` | Independent variable columns (optional if formula provided) |
+| `fe_cols` | `character vector` | `NULL` | Fixed effect columns (optional if formula provided) |
+| `formula` | `character` | `NULL` | R-style formula: `"y ~ x1 + x2 | fe1 + fe2"` |
+| `weights` | `character` | `NULL` | Column name for regression weights (WLS) |
+| `demean_tol` | `numeric` | `1e-3` | Convergence tolerance for iterative demeaning |
+| `n_iter` | `integer` | `100` | Maximum iterations for demeaning |
+| `vcov` | `character` | `"iid"` | Variance estimator: `"iid"`, `"HC1"`, or `"cluster"` |
+| `cluster_cols` | `character vector` | `NULL` | Clustering variables (required if `vcov="cluster"`) |
+| `ssc` | `logical` | `FALSE` | Small sample correction for clustered SEs |
+| `sample_frac` | `numeric` | `NULL` | Fraction of data to sample (e.g., 0.1 for 10%) |
+| `backend` | `character` | `"polars"` | Computation backend: `"polars"` or `"duckdb"` |
+
+### Returns
+
+A list containing:
+
+| Element | Type | Description |
+|---------|------|-------------|
+| `coefficients` | `named numeric` | Variable names → coefficient estimates |
+| `std_errors` | `named numeric` | Variable names → standard errors |
+| `n_obs` | `integer` | Number of observations used |
+| `iterations` | `integer` | Number of demeaning iterations |
+| `vcov_type` | `character` | Type of variance estimator used |
+| `is_iv` | `logical` | Whether IV/2SLS was used |
+| `n_instruments` | `integer` | Number of instruments (if IV) |
+| `n_clusters` | `integer` | Number of clusters (if clustered SEs) |
+
+### Formula Syntax
+
+The formula follows R-style syntax with extensions:
+
+```
+y ~ x1 + x2 | fe1 + fe2 | z1 + z2
+│    │         │           │
+│    │         │           └── Instruments (optional, for IV)
+│    │         └── Fixed effects to absorb
+│    └── Independent variables
+└── Dependent variable
+```
+
+**Special syntax:**
+
+| Syntax | Description | Example |
+|--------|-------------|---------|
+| `i(var)` | Factor variable expansion | `i(region)` |
+| `i(var, ref='val')` | Custom reference category | `i(region, ref='North')` |
+| `x:i(var)` | Interaction with factor | `treatment:i(region)` |
+
+### Examples
+
+#### Basic Usage
+
+```r
+library(leanfe)
+library(dplyr)
+
+# Generate sample data
+set.seed(42)
+n <- 10000
+
+df <- tibble(
+    y = rnorm(n),
+    treatment = rbinom(n, 1, 0.3),
+    x1 = rnorm(n),
+    firm_id = sample(1:100, n, replace = TRUE),
+    year = sample(2015:2024, n, replace = TRUE)
+)
+
+# Basic two-way fixed effects
+result <- leanfe(
+    formula = "y ~ treatment + x1 | firm_id + year",
+    data = df,
+    vcov = "iid"
+)
+
+print(result$coefficients)
+print(result$std_errors)
+print(result$n_obs)
+```
+
+#### Clustered Standard Errors
+
+```r
+result_cluster <- leanfe(
+    formula = "y ~ treatment + x1 | firm_id + year",
+    data = df,
+    vcov = "cluster",
+    cluster_cols = c("firm_id")
+)
+
+print(result_cluster$std_errors)
+print(result_cluster$n_clusters)
+```
+
+#### Using DuckDB Backend
+
+```r
+result_duckdb <- leanfe(
+    formula = "y ~ treatment + x1 | firm_id + year",
+    data = df,
+    vcov = "iid",
+    backend = "duckdb"
+)
+
+print(result_duckdb$coefficients)
+```
+
+#### Reading from Parquet
+
+```r
+# For large datasets, read directly from parquet
+result <- leanfe(
+    formula = "y ~ treatment | firm_id + year",
+    data = "large_data.parquet",
+    backend = "duckdb"
+)
+```
+
+#### Instrumental Variables
+
+```r
+# Add instrument
+df$instrument <- rnorm(n)
+
+result_iv <- leanfe(
+    formula = "y ~ treatment | firm_id + year | instrument",
+    data = df,
+    vcov = "iid"
+)
+
+print(result_iv$coefficients)
+print(result_iv$is_iv)
+print(result_iv$n_instruments)
+```
+
+#### Weighted Regression
+
+```r
+# Add weights
+df$weight <- abs(rnorm(n, 1, 0.3))
+
+result_wls <- leanfe(
+    formula = "y ~ treatment + x1 | firm_id + year",
+    data = df,
+    weights = "weight",
+    vcov = "iid"
+)
+
+print(result_wls$coefficients)
+```
+
+## Package Structure
+
+```
+leanfe/
+├── R/
+│   ├── fast_feols.R    # Main entry point
+│   ├── polars.R        # Polars backend
+│   ├── duckdb.R        # DuckDB backend
+│   └── common.R        # Shared utilities
+├── man/                # Documentation
+└── tests/              # Unit tests
+```
+
+## Comparison with fixest
+
+leanfe is designed to be compatible with fixest syntax:
+
+| Feature | leanfe | fixest |
+|---------|--------|--------|
+| Formula syntax | `y ~ x \| fe` | `y ~ x \| fe` |
+| Clustered SE | `vcov="cluster"` | `vcov="cluster"` |
+| Factor variables | `i(var)` | `i(var)` |
+| IV regression | `y ~ x \| fe \| z` | `y ~ x \| fe \| z` |
+
+**Key differences:**
+
+- leanfe offers DuckDB backend for memory efficiency
+- leanfe uses Polars for faster in-memory computation
+- fixest has more advanced features (multi-way FE, etc.)
+
+## See Also
+
+- [Basic Usage Tutorial](../tutorials/basic-usage.qmd)
+- [Python API Reference](python.qmd)
+- [Benchmarks](../benchmarks/overview.qmd)
