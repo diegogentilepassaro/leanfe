@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2025-12-05
+
+### Changed
+
+- **Renamed API**: All functions renamed from `fast_feols*` to `leanfe*`
+  - `fast_feols()` → `leanfe()`
+  - `fast_feols_polars()` → `leanfe_polars()`
+  - `fast_feols_duckdb()` → `leanfe_duckdb()`
+- **Formatted output**: Results now display as a formatted table (like fixest/statsmodels)
+  - Shows formula, observations, fixed effects, R² (within)
+  - Displays coefficients with t-statistics, p-values, and significance stars
+  - New `LeanFEResult` class with methods: `coef()`, `se()`, `tstat()`, `pvalue()`, `confint()`
+  - Backwards compatible: still supports dict-like access (`result['coefficients']`)
+
+### Removed
+
+- Removed continuous regressor warning (was not useful - cannot distinguish treatment from control variables)
+
 ## [0.1.0] - 2025-12-03
 
 ### Added
@@ -20,8 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **IV/2SLS**: Instrumental variables via `"y ~ x | fe | z"` syntax
 - **Standard errors**: IID, HC1 (robust), and clustered (one-way and multi-way)
 - **Weighted regression**: WLS via `weights` parameter
-- **Python package**: `leanfe` with full test coverage (39 tests)
-- **R package**: `fasthdferg` with full test coverage (39 tests)
+- **Python package**: `leanfe` with full test coverage
+- **R package**: `leanfe` with full test coverage
 - **Cross-platform consistency**: Identical API and results in Python and R
 
 ### Performance
