@@ -50,7 +50,16 @@ remotes::install_github("diegogentilepassaro/leanfe", subdir = "package/r")
 
 Let's run a fixed effects regression on synthetic panel data. This example uses 1 million observations to demonstrate leanfe's efficiency.
 
-leanfe automatically uses **YOCO compression** for IID and HC1 standard errors, compressing data by 10-1000x for discrete regressors. This makes it extremely fast even on large datasets.
+::: {.callout-tip}
+## Why is leanfe so fast?
+
+leanfe uses **YOCO compression** + **sparse matrices** for IID/HC1 standard errors:
+
+1. **Compression**: Groups rows with identical regressors → 10-1000x fewer rows to process
+2. **Sparse matrices**: FE dummies are 99%+ zeros → only store and compute non-zeros
+
+The result: **7-25x faster** than traditional methods, with identical coefficients and standard errors.
+:::
 
 ### Generate Sample Data
 

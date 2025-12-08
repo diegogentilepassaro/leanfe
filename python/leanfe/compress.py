@@ -98,13 +98,26 @@ def compress_polars(
     return compressed, n_obs_original
 
 
+class DuckDBResult:
+    """Wrapper for DuckDB numpy result to provide dict-like access."""
+    def __init__(self, data: Dict[str, np.ndarray]):
+        self._data = data
+    
+    def __getitem__(self, key: str) -> np.ndarray:
+        return self._data[key]
+    
+    def __len__(self) -> int:
+        # Return length of first array
+        return len(next(iter(self._data.values())))
+
+
 def compress_duckdb(
     con,
     y_col: str,
     x_cols: List[str],
     fe_cols: List[str],
     weights: Optional[str] = None
-) -> Tuple[any, int]:
+) -> Tuple[DuckDBResult, int]:
     """
     Compress data using SQL GROUP BY.
     
@@ -124,7 +137,7 @@ def compress_duckdb(
     Returns
     -------
     tuple
-        (compressed_df as pandas, n_obs_original)
+        (compressed_data as DuckDBResult, n_obs_original)
     """
     group_cols = x_cols + fe_cols
     group_cols_sql = ", ".join(group_cols)
@@ -156,8 +169,10 @@ def compress_duckdb(
         GROUP BY {group_cols_sql}
         """
     
-    compressed_df = con.execute(query).fetchdf()
-    return compressed_df, n_obs_original
+    # Use fetchnumpy() to avoid pandas dependency
+    result = con.execute(query).fetchnumpy()
+    compressed = DuckDBResult(result)
+    return compressed, n_obs_original
 
 
 def _extract_numpy_arrays(compressed_df, x_cols: List[str], backend: str):
@@ -171,13 +186,13 @@ def _extract_numpy_arrays(compressed_df, x_cols: List[str], backend: str):
         def get_fe_values(fe):
             return compressed_df[fe].to_numpy()
     else:
-        # DuckDB returns pandas DataFrame
-        X_reg = compressed_df[x_cols].values
-        Y = compressed_df["_mean_y"].values
-        wts = compressed_df["_wts"].values
+        # DuckDB returns DuckDBResult (dict-like with numpy arrays)
+        X_reg = np.column_stack([compressed_df[col] for col in x_cols])
+        Y = compressed_df["_mean_y"]
+        wts = compressed_df["_wts"]
         
         def get_fe_values(fe):
-            return compressed_df[fe].values
+            return compressed_df[fe]
     
     return X_reg, Y, wts, get_fe_values
 
@@ -392,9 +407,10 @@ def compute_rss_grouped(
         sum_y_g = compressed_df["_sum_y"].to_numpy()
         sum_y_sq_g = compressed_df["_sum_y_sq"].to_numpy()
     else:
-        n_g = compressed_df["_n"].values
-        sum_y_g = compressed_df["_sum_y"].values
-        sum_y_sq_g = compressed_df["_sum_y_sq"].values
+        # DuckDB returns DuckDBResult (dict-like with numpy arrays)
+        n_g = compressed_df["_n"]
+        sum_y_g = compressed_df["_sum_y"]
+        sum_y_sq_g = compressed_df["_sum_y_sq"]
     
     # Fitted values for each group (handle sparse)
     if sparse.issparse(X):

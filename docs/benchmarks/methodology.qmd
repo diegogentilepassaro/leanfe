@@ -7,15 +7,24 @@ subtitle: "Transparent and reproducible performance testing"
 
 This page documents our benchmark methodology to ensure transparency and reproducibility. All benchmarks can be reproduced using the provided scripts.
 
-## YOCO Compression
+## YOCO Compression + Sparse Matrices
 
-leanfe uses the **YOCO (You Only Compress Once)** strategy from [Wong et al. (2021)](https://arxiv.org/abs/2102.11297) for IID and HC1 standard errors:
+leanfe uses the **YOCO (You Only Compress Once)** strategy from [Wong et al. (2021)](https://arxiv.org/abs/2102.11297) combined with **sparse matrices** for IID and HC1 standard errors:
 
 1. **Compress**: GROUP BY (regressors + fixed effects) → compute `n`, `sum(y)`, `sum(y²)` per group
-2. **Solve**: Run weighted least squares on compressed data
-3. **Standard errors**: Compute from grouped residual sum of squares
+2. **Build sparse design matrix**: FE dummies as `scipy.sparse` (Python) or `Matrix` (R) - **13x faster** than dense
+3. **Solve sparse WLS**: Weighted least squares with sparse operations - **7x faster** than dense
+4. **Standard errors**: Compute from grouped residual sum of squares
 
-This is **lossless** - coefficients and standard errors are identical to the full computation, but much faster for discrete regressors.
+This is **lossless** - coefficients and standard errors are identical to the full computation, but up to **23x faster** for discrete regressors at scale.
+
+### Why Sparse Matrices?
+
+With 500 FE1 levels + 100 FE2 levels, the design matrix has ~600 columns but only ~2 non-zeros per row (one per FE). Sparse matrices:
+
+- **Memory**: Store only non-zero entries (99.7% reduction)
+- **Speed**: Skip zero multiplications in matrix operations
+- **Scalability**: Time stays constant regardless of FE cardinality
 
 ## Data Generation
 

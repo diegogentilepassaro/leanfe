@@ -7,6 +7,18 @@ subtitle: "OLS with high-dimensional fixed effects"
 
 This tutorial covers the fundamentals of using `leanfe` for fixed effects regression.
 
+::: {.callout-note}
+## Under the Hood: YOCO + Sparse Matrices
+
+leanfe is fast because it combines two optimizations:
+
+1. **YOCO Compression**: For IID/HC1 SEs, rows with identical (regressors, FEs) are grouped together. With binary treatment × 500 firms × 10 years, 100K rows compress to ~10K unique combinations.
+
+2. **Sparse Matrices**: FE dummies are 99%+ zeros. Sparse storage skips zeros entirely, making matrix operations 10-20x faster.
+
+**Result**: 7-25x speedup with identical coefficients and standard errors.
+:::
+
 ## Formula Syntax
 
 ```

@@ -27,7 +27,7 @@ jobs:
       
       - name: Install Python dependencies
         run: |
-          pip install polars duckdb numpy jupyter pyyaml matplotlib
+          pip install polars duckdb numpy scipy jupyter pyyaml matplotlib
           pip install -e package/python
       
       - name: Set up Quarto
