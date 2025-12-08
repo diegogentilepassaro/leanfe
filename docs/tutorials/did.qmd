@@ -164,8 +164,8 @@ plt.show()
 #| echo: true
 #| output: true
 
-result_iid = leanfe("y ~ treated_post | state_id + year", data=df, vcov="iid")
-result_cluster = leanfe("y ~ treated_post | state_id + year", data=df, 
+result_iid = leanfe(data=df, formula="y ~ treated_post | state_id + year", vcov="iid")
+result_cluster = leanfe(data=df, formula="y ~ treated_post | state_id + year",
                         vcov="cluster", cluster_cols=["state_id"])
 
 print("Standard Error Comparison:")

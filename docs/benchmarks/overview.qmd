@@ -5,7 +5,18 @@ subtitle: "Comparing leanfe against PyFixest and fixest"
 
 ## Overview
 
-leanfe is designed for speed and memory efficiency. This page presents reproducible benchmarks comparing leanfe's two backends (Polars and DuckDB) against established packages.
+leanfe is designed for speed and memory efficiency. It uses **YOCO (You Only Compress Once)** compression from [Wong et al. (2021)](https://arxiv.org/abs/2102.11297) to dramatically reduce computation time and memory usage.
+
+## How Compression Works
+
+For IID and HC1 standard errors, leanfe automatically compresses data by grouping on (regressors + fixed effects):
+
+1. **GROUP BY** regressors and fixed effects
+2. **Compute sufficient statistics**: count, sum(y), sum(y²) per group
+3. **Run weighted least squares** on compressed data
+4. **Compute standard errors** from grouped residuals
+
+This is lossless - coefficients and standard errors are identical to the full computation.
 
 ## Key Findings
 
@@ -13,6 +24,7 @@ leanfe is designed for speed and memory efficiency. This page presents reproduci
 |--------|---------------|---------------|
 | **Speed** | ⚡ Fastest | Moderate |
 | **Memory** | Higher | 💾 Minimal |
+| **Compression** | 10-1000x for discrete regressors |
 | **Best for** | In-memory data | Large datasets |
 
 ## Benchmark Results
@@ -146,6 +158,33 @@ The DuckDB backend's key advantage is memory efficiency:
 - Dataset is larger than available RAM
 - Memory is constrained
 - Reading directly from parquet files
+
+## Compression Ratio
+
+The compression ratio depends on the number of unique (regressor, FE) combinations:
+
+```{python}
+#| echo: true
+#| output: true
+
+# Show compression in action
+np.random.seed(42)
+n = 1_000_000
+
+# Discrete regressors = high compression
+df_discrete = pl.DataFrame({
+    "y": np.random.normal(0, 1, n),
+    "treatment": np.random.binomial(1, 0.3, n).astype(float),  # Binary
+    "fe1": np.random.randint(1, 501, n),
+    "fe2": np.random.randint(1, 101, n),
+})
+
+result = leanfe(data=df_discrete, formula="y ~ treatment | fe1 + fe2", vcov="iid")
+print(f"Discrete regressors (1M obs):")
+print(f"  Original rows:   {result['n_obs']:,}")
+print(f"  Compressed rows: {result['n_compressed']:,}")
+print(f"  Compression:     {result['compression_ratio']:.1%}")
+```
 
 ## Coefficient Validation
 

@@ -26,7 +26,7 @@ High-dimensional fixed effects regression that's **fast** when you need speed, a
 
 ::: {.g-col-12 .g-col-md-6 .g-col-lg-3}
 ### ⚡ Speed
-**Polars backend** delivers blazing fast performance for in-memory datasets. Process millions of observations in seconds.
+**YOCO compression** automatically compresses data 10-1000x for discrete regressors. Process millions of observations in seconds.
 :::
 
 ::: {.g-col-12 .g-col-md-6 .g-col-lg-3}

@@ -180,6 +180,29 @@ leanfe_duckdb <- function(
     }
   }
   
+  # Check if we should use compression strategy (faster for IID/HC1 without IV)
+  is_iv <- length(instruments) > 0
+  use_compress <- .should_use_compress(vcov, is_iv)
+  
+  if (use_compress) {
+    # Use YOCO compression strategy - much faster and lower memory
+    result <- .leanfe_compress_duckdb(
+      con = con,
+      y_col = y_col,
+      x_cols = x_cols,
+      fe_cols = fe_cols,
+      weights = weights,
+      vcov = vcov
+    )
+    # Add missing fields for compatibility
+    result$iterations <- 0L
+    result$is_iv <- FALSE
+    result$n_instruments <- NULL
+    result$n_clusters <- NULL
+    return(result)
+  }
+  
+  # Fall back to FWL demeaning for cluster SEs or IV
   # Drop singletons
   for (fe in fe_cols) {
     dbExecute(con, sprintf(

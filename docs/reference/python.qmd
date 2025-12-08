@@ -54,11 +54,23 @@ A dictionary containing:
 | `coefficients` | `dict[str, float]` | Variable names → coefficient estimates |
 | `std_errors` | `dict[str, float]` | Variable names → standard errors |
 | `n_obs` | `int` | Number of observations used |
-| `iterations` | `int` | Number of demeaning iterations |
+| `n_compressed` | `int` | Number of compressed rows (if compression used) |
+| `compression_ratio` | `float` | Compression ratio (if compression used) |
+| `iterations` | `int` | Number of demeaning iterations (0 if compression used) |
 | `vcov_type` | `str` | Type of variance estimator used |
 | `is_iv` | `bool` | Whether IV/2SLS was used |
 | `n_instruments` | `int` | Number of instruments (if IV) |
 | `n_clusters` | `int` | Number of clusters (if clustered SEs) |
+
+### Compression
+
+For `vcov="iid"` or `vcov="HC1"` (without IV), leanfe automatically uses **YOCO compression** from [Wong et al. (2021)](https://arxiv.org/abs/2102.11297):
+
+1. Groups data by (regressors + fixed effects)
+2. Computes sufficient statistics per group
+3. Runs weighted least squares on compressed data
+
+This is **lossless** - coefficients and standard errors are identical to the full computation, but much faster for discrete regressors (10-1000x compression).
 
 ### Formula Syntax
 
@@ -198,10 +210,12 @@ print("WLS result:", result_wls['coefficients'])
 ```
 leanfe/
 ├── __init__.py          # Exports leanfe
-├── leanfe.py        # Main entry point
+├── leanfe.py            # Main entry point
 ├── polars_impl.py       # Polars backend implementation
 ├── duckdb_impl.py       # DuckDB backend implementation
-└── common.py            # Shared utilities
+├── compress.py          # YOCO compression strategy
+├── common.py            # Shared utilities (formula parsing, SE computation)
+└── result.py            # LeanFEResult class
 ```
 
 ## See Also

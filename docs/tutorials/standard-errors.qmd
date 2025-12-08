@@ -51,7 +51,7 @@ print(f"Data: {n_obs:,} obs, {df['firm_id'].n_unique()} firms")
 #| echo: true
 #| output: true
 
-result_iid = leanfe("y ~ treatment + x1 | firm_id + year", data=df, vcov="iid")
+result_iid = leanfe(data=df, formula="y ~ treatment + x1 | firm_id + year", vcov="iid")
 
 print("IID:")
 for var in ["treatment", "x1"]:
@@ -64,7 +64,7 @@ for var in ["treatment", "x1"]:
 #| echo: true
 #| output: true
 
-result_hc1 = leanfe("y ~ treatment + x1 | firm_id + year", data=df, vcov="HC1")
+result_hc1 = leanfe(data=df, formula="y ~ treatment + x1 | firm_id + year", vcov="HC1")
 
 print("HC1:")
 for var in ["treatment", "x1"]:
@@ -78,8 +78,8 @@ for var in ["treatment", "x1"]:
 #| output: true
 
 result_cluster = leanfe(
-    "y ~ treatment + x1 | firm_id + year",
     data=df,
+    formula="y ~ treatment + x1 | firm_id + year",
     vcov="cluster",
     cluster_cols=["firm_id"]
 )
@@ -97,8 +97,8 @@ print(f"Clusters: {result_cluster['n_clusters']}")
 #| output: true
 
 result_twoway = leanfe(
-    "y ~ treatment + x1 | firm_id + year",
     data=df,
+    formula="y ~ treatment + x1 | firm_id + year",
     vcov="cluster",
     cluster_cols=["firm_id", "year"]
 )

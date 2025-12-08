@@ -2,6 +2,7 @@
 Polars-based fixed effects regression implementation.
 
 Optimized for speed using Polars DataFrame operations.
+Uses YOCO compression automatically for IID/HC1 standard errors.
 """
 
 import polars as pl
@@ -14,6 +15,7 @@ from .common import (
     compute_standard_errors,
     build_result
 )
+from .compress import should_use_compress, leanfe_compress_polars
 
 
 def _expand_factors(df: pl.DataFrame, factor_vars: List[tuple]) -> tuple:
@@ -228,6 +230,30 @@ def leanfe_polars(
         df, dummy_cols = _expand_factors(df, factor_vars)
         x_cols = x_cols + dummy_cols
     
+    # Check if we should use compression strategy (faster for IID/HC1 without IV)
+    is_iv = len(instruments) > 0
+    use_compress = should_use_compress(vcov, is_iv)
+    
+    if use_compress:
+        # Use YOCO compression strategy - much faster for discrete regressors
+        result = leanfe_compress_polars(
+            df=df,
+            y_col=y_col,
+            x_cols=x_cols,
+            fe_cols=fe_cols,
+            weights=weights,
+            vcov=vcov
+        )
+        # Add missing fields for compatibility
+        result["iterations"] = 0
+        result["is_iv"] = False
+        result["n_instruments"] = None
+        result["n_clusters"] = None
+        result["formula"] = formula
+        result["fe_cols"] = fe_cols
+        return result
+    
+    # Fall back to FWL demeaning for cluster SEs or IV
     # Extract weights if provided
     if weights is not None:
         w = df.select(weights).to_numpy().flatten()

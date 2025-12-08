@@ -2,6 +2,7 @@
 DuckDB-based fixed effects regression implementation.
 
 Optimized for memory efficiency using in-database operations.
+Uses YOCO compression automatically for IID/HC1 standard errors.
 """
 
 import duckdb
@@ -15,6 +16,7 @@ from .common import (
     compute_standard_errors,
     build_result
 )
+from .compress import should_use_compress, leanfe_compress_duckdb
 
 
 def leanfe_duckdb(
@@ -170,6 +172,30 @@ def leanfe_duckdb(
                     con.execute(f"UPDATE data SET {col_name} = CASE WHEN {var} = '{cat}' THEN 1 ELSE 0 END")
                     x_cols.append(col_name)
         
+        # Check if we should use compression strategy (faster for IID/HC1 without IV)
+        is_iv = len(instruments) > 0
+        use_compress = should_use_compress(vcov, is_iv)
+        
+        if use_compress:
+            # Use YOCO compression strategy - much faster and lower memory
+            result = leanfe_compress_duckdb(
+                con=con,
+                y_col=y_col,
+                x_cols=x_cols,
+                fe_cols=fe_cols,
+                weights=weights,
+                vcov=vcov
+            )
+            # Add missing fields for compatibility
+            result["iterations"] = 0
+            result["is_iv"] = False
+            result["n_instruments"] = None
+            result["n_clusters"] = None
+            result["formula"] = formula
+            result["fe_cols"] = fe_cols
+            return result
+        
+        # Fall back to FWL demeaning for cluster SEs or IV
         # Drop singletons
         for fe in fe_cols:
             con.execute(f"DELETE FROM data WHERE {fe} IN (SELECT {fe} FROM data GROUP BY {fe} HAVING COUNT(*) = 1)")

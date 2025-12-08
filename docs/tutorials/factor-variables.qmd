@@ -84,14 +84,16 @@ for var, coef in result['coefficients'].items():
 
 # Default (North as reference - first alphabetically)
 result_north = leanfe(
-    "y ~ treatment + x1 + i(region, ref='North') | firm_id + year",
-    data=df, vcov="iid"
+    data=df,
+    formula="y ~ treatment + x1 + i(region, ref='North') | firm_id + year",
+    vcov="iid"
 )
 
 # South as reference
 result_south = leanfe(
-    "y ~ treatment + x1 + i(region, ref='South') | firm_id + year",
-    data=df, vcov="iid"
+    data=df,
+    formula="y ~ treatment + x1 + i(region, ref='South') | firm_id + year",
+    vcov="iid"
 )
 
 print("North as reference:")

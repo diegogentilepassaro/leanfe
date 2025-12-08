@@ -5,12 +5,45 @@ subtitle: "Working with data larger than RAM"
 
 ## Overview
 
-leanfe's DuckDB backend enables you to run fixed effects regressions on datasets that don't fit in memory. This guide covers:
+leanfe is optimized for large datasets through two key features:
+
+1. **YOCO Compression**: Automatically compresses data by grouping on (regressors + FEs), achieving 10-1000x compression for discrete regressors
+2. **DuckDB Backend**: Streams data from disk, enabling analysis of datasets larger than RAM
+
+This guide covers:
 
 - When to use DuckDB vs Polars
 - Reading directly from parquet files
 - Memory vs speed tradeoffs
 - Best practices for large-scale analysis
+
+## Automatic Compression
+
+For IID and HC1 standard errors, leanfe automatically compresses your data:
+
+```{python}
+#| echo: true
+#| output: true
+
+import numpy as np
+import polars as pl
+from leanfe import leanfe
+
+# 1M observations with discrete regressors
+np.random.seed(42)
+n = 1_000_000
+df = pl.DataFrame({
+    "y": np.random.normal(0, 1, n),
+    "treatment": np.random.binomial(1, 0.3, n).astype(float),
+    "fe1": np.random.randint(1, 501, n),
+    "fe2": np.random.randint(1, 101, n),
+})
+
+result = leanfe(data=df, formula="y ~ treatment | fe1 + fe2", vcov="iid")
+print(f"Original:   {result['n_obs']:,} rows")
+print(f"Compressed: {result['n_compressed']:,} rows")
+print(f"Ratio:      {result['compression_ratio']:.1%}")
+```
 
 ## Backend Selection
 

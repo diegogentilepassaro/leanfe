@@ -88,15 +88,15 @@ for var, coef in result['coefficients'].items():
 #| output: true
 
 # IID
-result_iid = leanfe("y ~ treatment + x1 + x2 | firm_id + year", data=df, vcov="iid")
+result_iid = leanfe(data=df, formula="y ~ treatment + x1 + x2 | firm_id + year", vcov="iid")
 
 # HC1 (robust)
-result_hc1 = leanfe("y ~ treatment + x1 + x2 | firm_id + year", data=df, vcov="HC1")
+result_hc1 = leanfe(data=df, formula="y ~ treatment + x1 + x2 | firm_id + year", vcov="HC1")
 
 # Clustered
 result_cluster = leanfe(
-    "y ~ treatment + x1 + x2 | firm_id + year",
-    data=df, vcov="cluster", cluster_cols=["firm_id"]
+    data=df, formula="y ~ treatment + x1 + x2 | firm_id + year",
+    vcov="cluster", cluster_cols=["firm_id"]
 )
 
 print("SE for treatment:")
@@ -119,11 +119,11 @@ print(f"  Clustered: {result_cluster['std_errors']['treatment']:.4f}")
 import time
 
 start = time.time()
-result_polars = leanfe("y ~ treatment | firm_id + year", data=df, backend="polars")
+result_polars = leanfe(data=df, formula="y ~ treatment | firm_id + year", backend="polars")
 polars_time = time.time() - start
 
 start = time.time()
-result_duckdb = leanfe("y ~ treatment | firm_id + year", data=df, backend="duckdb")
+result_duckdb = leanfe(data=df, formula="y ~ treatment | firm_id + year", backend="duckdb")
 duckdb_time = time.time() - start
 
 print(f"Polars: {polars_time:.2f}s")

@@ -7,6 +7,16 @@ subtitle: "Transparent and reproducible performance testing"
 
 This page documents our benchmark methodology to ensure transparency and reproducibility. All benchmarks can be reproduced using the provided scripts.
 
+## YOCO Compression
+
+leanfe uses the **YOCO (You Only Compress Once)** strategy from [Wong et al. (2021)](https://arxiv.org/abs/2102.11297) for IID and HC1 standard errors:
+
+1. **Compress**: GROUP BY (regressors + fixed effects) → compute `n`, `sum(y)`, `sum(y²)` per group
+2. **Solve**: Run weighted least squares on compressed data
+3. **Standard errors**: Compute from grouped residual sum of squares
+
+This is **lossless** - coefficients and standard errors are identical to the full computation, but much faster for discrete regressors.
+
 ## Data Generation
 
 ### Synthetic Panel Data
@@ -237,12 +247,12 @@ df = pl.DataFrame({
 
 # Benchmark Polars
 start = time.time()
-leanfe("y ~ x | fe1 + fe2", df, backend="polars")
+leanfe(data=df, formula="y ~ x | fe1 + fe2", backend="polars")
 print(f"Polars: {time.time() - start:.2f}s")
 
 # Benchmark DuckDB
 start = time.time()
-leanfe("y ~ x | fe1 + fe2", df, backend="duckdb")
+leanfe(data=df, formula="y ~ x | fe1 + fe2", backend="duckdb")
 print(f"DuckDB: {time.time() - start:.2f}s")
 ```
 
