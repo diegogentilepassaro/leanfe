@@ -9,35 +9,69 @@ This page documents our benchmark methodology to ensure transparency and reprodu
 
 ## YOCO Compression + Sparse Matrices
 
-leanfe uses the **YOCO (You Only Compress Once)** strategy from [Wong et al. (2021)](https://arxiv.org/abs/2102.11297) combined with **sparse matrices** for IID and HC1 standard errors:
+leanfe uses the **YOCO (You Only Compress Once)** strategy from [Wong et al. (2021)](https://arxiv.org/abs/2102.11297) combined with **sparse matrices** for **all standard error types** (IID, HC1, and clustered):
+
+### For IID/HC1 Standard Errors
 
 1. **Compress**: GROUP BY (regressors + fixed effects) → compute `n`, `sum(y)`, `sum(y²)` per group
-2. **Build sparse design matrix**: FE dummies as `scipy.sparse` (Python) or `Matrix` (R) - **13x faster** than dense
-3. **Solve sparse WLS**: Weighted least squares with sparse operations - **7x faster** than dense
+2. **Build sparse design matrix**: FE dummies as `scipy.sparse` (Python) or `Matrix` (R)
+3. **Solve sparse WLS**: Weighted least squares with sparse operations
 4. **Standard errors**: Compute from grouped residual sum of squares
+
+### For Clustered Standard Errors (Section 5.3.1)
+
+Clustered SEs require additional steps to aggregate scores within clusters:
+
+1. **Within-cluster compression**: GROUP BY (regressors + fixed effects + **cluster_id**) — each compressed record belongs to exactly one cluster
+2. **Build sparse design matrix**: Same as above
+3. **Solve sparse WLS**: Same as above
+4. **Compute ẽ⁰**: Sum of residuals per group = `sum_y - n × ŷ`
+5. **Build sparse cluster matrix W̃_C**: Indicator matrix (G × C) mapping groups to clusters
+6. **Aggregate scores**: `cluster_scores = W̃_Cᵀ @ (X × ẽ⁰)` — vectorized, no loops!
+7. **Meat matrix**: `meat = cluster_scoresᵀ @ cluster_scores`
+8. **Sandwich**: `V(β̂) = (X'X)⁻¹ × meat × (X'X)⁻¹ × adjustment`
+
+The sparse cluster matrix W̃_C enables **vectorized aggregation** across all clusters simultaneously, avoiding the traditional loop over C clusters.
 
 This is **lossless** - coefficients and standard errors are identical to the full computation, but up to **23x faster** for discrete regressors at scale.
 
 ### Why Sparse Matrices?
 
-With 500 FE1 levels + 100 FE2 levels, the design matrix has ~600 columns but only ~2 non-zeros per row (one per FE). Sparse matrices:
+With many FE levels, the design matrix has many columns but only a few non-zeros per row (one per FE). Sparse matrices:
 
-- **Memory**: Store only non-zero entries (99.7% reduction)
+- **Memory**: Store only non-zero entries
 - **Speed**: Skip zero multiplications in matrix operations
-- **Scalability**: Time stays constant regardless of FE cardinality
+- **Scalability**: Time stays nearly constant regardless of FE cardinality
+
+For clustered SEs, the cluster matrix W̃_C is also sparse (one 1 per row), enabling efficient score aggregation even with thousands of clusters.
 
 ## Data Generation
 
 ### Synthetic Panel Data
 
-Benchmarks use synthetic panel data with known properties:
+All benchmarks use the same standardized data generation for consistency:
 
 ```python
 import numpy as np
 import polars as pl
 
-def generate_benchmark_data(n_obs, n_fe1=1000, n_fe2=500, seed=42):
-    """Generate synthetic benchmark data."""
+def generate_benchmark_data(n_obs, n_fe1=500, n_fe2=100, n_clusters=None, seed=42):
+    """
+    Generate synthetic benchmark data.
+    
+    Parameters
+    ----------
+    n_obs : int
+        Number of observations
+    n_fe1 : int
+        Number of FE1 levels (default 500, e.g., firms)
+    n_fe2 : int
+        Number of FE2 levels (default 100, e.g., products)
+    n_clusters : int, optional
+        Number of clusters for clustered SE benchmarks
+    seed : int
+        Random seed for reproducibility
+    """
     np.random.seed(seed)
     
     # Fixed effect IDs
@@ -48,22 +82,31 @@ def generate_benchmark_data(n_obs, n_fe1=1000, n_fe2=500, seed=42):
     fe1_effects = np.random.normal(0, 1, n_fe1 + 1)[fe1]
     fe2_effects = np.random.normal(0, 0.5, n_fe2 + 1)[fe2]
     
-    # Regressors
+    # Regressors - discrete for YOCO compression benefits
     treatment = np.random.binomial(1, 0.3, n_obs).astype(float)
-    x1 = np.random.normal(0, 1, n_obs)
+    x1 = np.random.choice([0.0, 1.0, 2.0], n_obs)  # Discrete
     
     # Outcome: y = 2.5*treatment + 1.5*x1 + fe1 + fe2 + noise
     y = (2.5 * treatment + 1.5 * x1 + 
          fe1_effects + fe2_effects + 
          np.random.normal(0, 1, n_obs))
     
-    return pl.DataFrame({
+    data = {
         "y": y,
         "treatment": treatment,
         "x1": x1,
         "fe1": fe1,
         "fe2": fe2,
-    })
+    }
+    
+    # Add cluster column if needed
+    if n_clusters is not None:
+        cluster_id = np.random.randint(0, n_clusters, n_obs)
+        cluster_effects = np.random.normal(0, 0.5, n_clusters)[cluster_id]
+        data["cluster_id"] = cluster_id
+        data["y"] = y + cluster_effects  # Add cluster-level variation
+    
+    return pl.DataFrame(data)
 ```
 
 ### Data Characteristics
@@ -72,21 +115,23 @@ def generate_benchmark_data(n_obs, n_fe1=1000, n_fe2=500, seed=42):
 |-----------|-------|-----------|
 | True treatment effect | 2.5 | Known ground truth for validation |
 | True x1 effect | 1.5 | Known ground truth for validation |
-| FE1 cardinality | 1,000 | High-dimensional (e.g., firms) |
-| FE2 cardinality | 500 | Medium-dimensional (e.g., products) |
-| Treatment probability | 0.3 | Realistic treatment assignment |
+| FE1 cardinality | 500 | High-dimensional (e.g., firms) |
+| FE2 cardinality | 100 | Medium-dimensional (e.g., products) |
+| Treatment | Binary (0/1) | 30% probability, discrete for compression |
+| x1 | Discrete (0, 1, 2) | Enables YOCO compression |
 | Error variance | 1.0 | Standard normal errors |
 | Seed | 42 | Reproducibility |
 
 ### Dataset Sizes
 
-| Size | Observations | Approximate File Size |
-|------|--------------|----------------------|
-| Small | 100,000 | ~5 MB |
-| Medium | 500,000 | ~25 MB |
-| Large | 1,000,000 | ~50 MB |
-| XL | 5,000,000 | ~250 MB |
-| XXL | 10,000,000 | ~500 MB |
+All benchmarks use consistent sizes for comparability:
+
+| Size | Observations | Use Case |
+|------|--------------|----------|
+| Small | 100,000 | Quick tests |
+| Medium | 1,000,000 | Standard benchmarks |
+| Large | 10,000,000 | Stress tests |
+| XL | 100,000,000 | Memory efficiency / scale tests |
 
 ## Hardware and Software
 

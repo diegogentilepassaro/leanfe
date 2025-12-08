@@ -14,6 +14,7 @@ High-dimensional fixed effects regression that's **fast** when you need speed, a
 - 💾 **DuckDB backend** - Process datasets larger than RAM
 - 🔄 **Unified API** - Same syntax in Python and R
 - 📊 **Full econometrics toolkit** - Clustered SEs, factor variables, IV/2SLS
+- 🚀 **YOCO compression** - [Wong et al. (2021)](https://arxiv.org/abs/2102.11297) optimal data compression with sparse matrices for blazing fast clustered standard errors
 
 ## Quick Start
 
@@ -70,14 +71,16 @@ remotes::install_github("diegogentilepassaro/leanfe", subdir = "r")
 
 ## Performance
 
-**Polars is faster, DuckDB uses far less memory.**
+**Two backends optimized for different scenarios:**
 
-| Dataset Size | Backend | Run Time | Peak Memory |
-|-------------|---------|----------|-------------|
-| 1M obs | Polars | ~2 sec | ~150 MB |
-| 1M obs | DuckDB | ~5 sec | ~50 MB |
-| 10M obs | Polars | ~15 sec | ~1.2 GB |
-| 10M obs | DuckDB | ~40 sec | ~150 MB |
+| Backend | Best For | Trade-off |
+|---------|----------|-----------|
+| **Polars** | Maximum speed | Higher memory usage |
+| **DuckDB** | Large datasets | Slightly slower, minimal memory |
+
+Both backends use YOCO compression + sparse matrices for all SE types (IID, HC1, clustered).
+
+**Tested up to 50M observations** — see [live benchmarks](https://diegogentilepassaro.github.io/leanfe/benchmarks/overview.html) for current performance numbers.
 
 ## License
 

@@ -53,12 +53,13 @@ Let's run a fixed effects regression on synthetic panel data. This example uses 
 ::: {.callout-tip}
 ## Why is leanfe so fast?
 
-leanfe uses **YOCO compression** + **sparse matrices** for IID/HC1 standard errors:
+leanfe uses **YOCO compression** + **sparse matrices** from [Wong et al. (2021)](https://arxiv.org/abs/2102.11297) for **all SE types**:
 
-1. **Compression**: Groups rows with identical regressors → 10-1000x fewer rows to process
-2. **Sparse matrices**: FE dummies are 99%+ zeros → only store and compute non-zeros
+1. **Compression**: Groups rows with identical regressors → dramatically fewer rows to process
+2. **Sparse matrices**: FE dummies are mostly zeros → only store and compute non-zeros
+3. **Sparse cluster matrix**: For clustered SEs, vectorized score aggregation (no loops over clusters!)
 
-The result: **7-25x faster** than traditional methods, with identical coefficients and standard errors.
+The result: Much faster than traditional methods, with identical coefficients and standard errors. See [benchmarks](benchmarks/overview.qmd) for specific speedups.
 :::
 
 ### Generate Sample Data
@@ -239,10 +240,16 @@ leanfe offers two backends optimized for different scenarios:
 
 | Backend | Best For | Trade-off |
 |---------|----------|-----------|
-| **Polars** (default) | Speed | Requires data to fit in memory |
-| **DuckDB** | Large datasets | Slightly slower, but minimal memory |
+| **Polars** (default) | Maximum speed | Requires data to fit in memory |
+| **DuckDB** | Large datasets, memory efficiency | Slightly slower, but minimal memory |
 
-Both backends use YOCO compression automatically for IID/HC1 standard errors.
+**Why two backends?**
+
+- **Polars**: Uses lazy evaluation and zero-copy operations for blazing fast in-memory computation. Ideal when you're iterating quickly or running many regressions on the same data.
+
+- **DuckDB**: Streams data from disk and uses SQL-based query optimization. Can process datasets larger than your RAM by reading directly from parquet files. Memory usage stays constant regardless of dataset size.
+
+Both backends use YOCO compression + sparse matrices automatically for **all SE types** (IID, HC1, and clustered).
 
 ::: {.panel-tabset}
 

@@ -9,13 +9,35 @@ leanfe is designed for speed and memory efficiency. It uses **YOCO (You Only Com
 
 ## How It Works
 
+leanfe combines three innovations for maximum performance:
+
+### YOCO Compression
+
 For **all standard error types** (IID, HC1, and clustered), leanfe automatically:
 
 1. **Compresses data**: GROUP BY (regressors + fixed effects + cluster) → compute `n`, `sum(y)`, `sum(y²)` per group
-2. **Builds sparse design matrix**: FE dummies as scipy.sparse/Matrix (13x faster than dense)
-3. **Solves weighted least squares**: On compressed data with sparse operations (7x faster)
+2. **Builds sparse design matrix**: FE dummies as scipy.sparse/Matrix
+3. **Solves weighted least squares**: On compressed data with sparse operations
 4. **Computes standard errors**: From grouped sufficient statistics
-5. **For clustered SEs**: Uses sparse cluster matrix W̃_C for vectorized score aggregation (Section 5.3.1)
+
+### Sparse Cluster Matrix (Section 5.3.1)
+
+For clustered SEs, leanfe uses a sparse cluster indicator matrix W̃_C:
+
+- **W̃_C ∈ R^{G×C}**: Maps G compressed groups to C clusters (one 1 per row)
+- **Vectorized aggregation**: `cluster_scores = W̃_Cᵀ @ (X × ẽ⁰)` — no loops over clusters!
+- **Meat matrix**: `meat = cluster_scoresᵀ @ cluster_scores`
+
+This makes clustered SEs just as fast as IID/HC1, even with thousands of clusters.
+
+### Dual Backend Architecture
+
+| Backend | Strengths | Best For |
+|---------|-----------|----------|
+| **Polars** | Blazing fast, lazy evaluation, zero-copy | Speed when data fits in memory |
+| **DuckDB** | Streams from disk, constant memory | Datasets larger than RAM |
+
+Both backends use YOCO + sparse matrices automatically. The choice is about **speed vs memory**, not features.
 
 This is **lossless** - coefficients and standard errors are identical to the full computation, but up to **23x faster** at scale.
 
@@ -25,21 +47,19 @@ See [Clustered SE Benchmarks](cluster-se.qmd) for detailed performance analysis 
 
 | Metric | leanfe-Polars | leanfe-DuckDB |
 |--------|---------------|---------------|
-| **Speed** | ⚡ Fastest (0.08s @ 1M rows) | Fast (0.5s @ 1M rows) |
+| **Speed** | ⚡ Fastest | Fast |
 | **Memory** | Higher | 💾 Minimal |
-| **Compression** | 10-1000x for discrete regressors |
-| **Speedup vs FWL** | 7-23x faster with YOCO+sparse |
-| **Best for** | In-memory data | Large datasets |
-
-### YOCO + Sparse vs Traditional FWL
-
-| Dataset Size | YOCO+Sparse | FWL (cluster SEs) | Speedup |
-|--------------|-------------|-------------------|---------|
-| 100K rows | 0.05s | 0.07s | 1.3x |
-| 1M rows | 0.08s | 0.59s | **7.3x** |
-| 5M rows | 0.15s | 3.42s | **22.8x** |
+| **Best for** | In-memory data | Large datasets / memory-constrained |
 
 ## Benchmark Results
+
+All benchmarks use standardized data generation (see [Methodology](methodology.qmd)):
+
+- **FE1**: 500 levels, **FE2**: 100 levels
+- **Regressors**: Binary treatment + discrete x1 (0, 1, 2)
+- **True coefficients**: treatment=2.5, x1=1.5
+
+### Python Benchmarks
 
 ```{python}
 #| echo: false
@@ -48,100 +68,185 @@ See [Clustered SE Benchmarks](cluster-se.qmd) for detailed performance analysis 
 import numpy as np
 import polars as pl
 import time
+import tracemalloc
+import gc
 from leanfe import leanfe
 
-# Generate benchmark data
 np.random.seed(42)
 
-def run_benchmark(n_obs, n_fe1=500, n_fe2=100):
-    """Run benchmark for given size."""
+def generate_benchmark_data(n_obs, n_fe1=500, n_fe2=100):
+    """Standardized benchmark data generation."""
     fe1 = np.random.randint(1, n_fe1 + 1, n_obs)
     fe2 = np.random.randint(1, n_fe2 + 1, n_obs)
     fe1_effects = np.random.normal(0, 1, n_fe1 + 1)[fe1]
     fe2_effects = np.random.normal(0, 0.5, n_fe2 + 1)[fe2]
     
     treatment = np.random.binomial(1, 0.3, n_obs).astype(float)
-    x1 = np.random.normal(0, 1, n_obs)
+    x1 = np.random.choice([0.0, 1.0, 2.0], n_obs)  # Discrete for compression
     y = 2.5 * treatment + 1.5 * x1 + fe1_effects + fe2_effects + np.random.normal(0, 1, n_obs)
     
-    df = pl.DataFrame({
+    return pl.DataFrame({
         "y": y, "treatment": treatment, "x1": x1,
         "fe1": fe1, "fe2": fe2,
     })
+
+def run_benchmark(n_obs):
+    """Run benchmark with time and memory measurement."""
+    gc.collect()
+    df = generate_benchmark_data(n_obs)
+    results = {"n_obs": n_obs}
     
-    results = {}
-    
-    # Polars
+    # Polars benchmark
+    gc.collect()
+    tracemalloc.start()
     start = time.time()
-    leanfe(formula="y ~ treatment + x1 | fe1 + fe2", data=df, vcov="iid", backend="polars")
-    results["polars"] = time.time() - start
+    result_polars = leanfe(formula="y ~ treatment + x1 | fe1 + fe2", data=df, vcov="iid", backend="polars")
+    results["py_polars_time"] = time.time() - start
+    _, results["py_polars_mem"] = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    results["compression"] = result_polars.get("compression_ratio", 1.0)
     
-    # DuckDB
+    # DuckDB benchmark
+    gc.collect()
+    tracemalloc.start()
     start = time.time()
     leanfe(formula="y ~ treatment + x1 | fe1 + fe2", data=df, vcov="iid", backend="duckdb")
-    results["duckdb"] = time.time() - start
+    results["py_duckdb_time"] = time.time() - start
+    _, results["py_duckdb_mem"] = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
     
     return results
 
-# Run benchmarks
-sizes = [100_000, 500_000, 1_000_000]
-benchmark_results = []
+# Run benchmarks: 100K, 1M, 10M
+sizes = [100_000, 1_000_000, 10_000_000]
+py_results = []
+
+print("Python IID Standard Errors Benchmark (Two-way FE)")
+print("=" * 80)
+print(f"{'Obs':>12} {'Polars':>10} {'DuckDB':>10} {'Polars Mem':>12} {'DuckDB Mem':>12} {'Compress':>10}")
+print("-" * 80)
 
 for n in sizes:
     result = run_benchmark(n)
-    benchmark_results.append({
-        "n_obs": n,
-        "polars_time": result["polars"],
-        "duckdb_time": result["duckdb"],
-    })
-
-# Display results
-print("Benchmark Results (Two-way FE, IID SE)")
-print("=" * 50)
-print(f"{'Observations':<15} {'Polars':<12} {'DuckDB':<12}")
-print("-" * 50)
-for r in benchmark_results:
-    print(f"{r['n_obs']:>12,}   {r['polars_time']:>8.2f}s    {r['duckdb_time']:>8.2f}s")
+    py_results.append(result)
+    polars_mem_mb = result["py_polars_mem"] / 1024 / 1024
+    duckdb_mem_mb = result["py_duckdb_mem"] / 1024 / 1024
+    print(f"{n:>12,} {result['py_polars_time']:>9.2f}s {result['py_duckdb_time']:>9.2f}s {polars_mem_mb:>10.0f} MB {duckdb_mem_mb:>10.0f} MB {result['compression']:>9.1%}")
 ```
 
-## Performance Chart
+### R Benchmarks
+
+::: {.callout-note}
+R benchmarks use the same data generation and test the R Polars and R DuckDB backends.
+:::
+
+```{r}
+#| echo: false
+#| output: true
+#| eval: true
+
+library(polars)
+library(duckdb)
+library(DBI)
+library(Matrix)
+
+# Source leanfe R package
+source("../../r/R/common.R")
+source("../../r/R/compress.R")
+source("../../r/R/polars.R")
+source("../../r/R/duckdb.R")
+
+set.seed(42)
+
+generate_benchmark_data <- function(n_obs, n_fe1 = 500, n_fe2 = 100) {
+  fe1 <- sample(1:n_fe1, n_obs, replace = TRUE)
+  fe2 <- sample(1:n_fe2, n_obs, replace = TRUE)
+  fe1_effects <- rnorm(n_fe1 + 1)[fe1]
+  fe2_effects <- rnorm(n_fe2 + 1, sd = 0.5)[fe2]
+  
+  treatment <- rbinom(n_obs, 1, 0.3)
+  x1 <- sample(c(0, 1, 2), n_obs, replace = TRUE)
+  y <- 2.5 * treatment + 1.5 * x1 + fe1_effects + fe2_effects + rnorm(n_obs)
+  
+  pl$DataFrame(
+    y = y, treatment = as.numeric(treatment), x1 = as.numeric(x1),
+    fe1 = fe1, fe2 = fe2
+  )
+}
+
+run_r_benchmark <- function(n_obs) {
+  df <- generate_benchmark_data(n_obs)
+  
+  # R Polars benchmark
+  start <- Sys.time()
+  result_polars <- leanfe_polars(data = df, formula = "y ~ treatment + x1 | fe1 + fe2", vcov = "iid")
+  r_polars_time <- as.numeric(difftime(Sys.time(), start, units = "secs"))
+  
+  # R DuckDB benchmark
+  start <- Sys.time()
+  result_duckdb <- leanfe_duckdb(data = df, formula = "y ~ treatment + x1 | fe1 + fe2", vcov = "iid")
+  r_duckdb_time <- as.numeric(difftime(Sys.time(), start, units = "secs"))
+  
+  list(
+    n_obs = n_obs,
+    r_polars_time = r_polars_time,
+    r_duckdb_time = r_duckdb_time,
+    compression = result_polars$compression_ratio
+  )
+}
+
+# Run R benchmarks: 100K, 1M, 10M
+sizes <- c(100000, 1000000, 10000000)
+
+cat("R IID Standard Errors Benchmark (Two-way FE)\n")
+cat(strrep("=", 60), "\n")
+cat(sprintf("%12s %10s %10s %10s\n", "Obs", "Polars", "DuckDB", "Compress"))
+cat(strrep("-", 60), "\n")
+
+for (n in sizes) {
+  result <- run_r_benchmark(n)
+  cat(sprintf("%12s %9.2fs %9.2fs %9.1f%%\n", 
+              format(n, big.mark = ",", scientific = FALSE), 
+              result$r_polars_time, 
+              result$r_duckdb_time,
+              result$compression * 100))
+}
+```
+
+## Performance Charts (Python)
 
 ```{python}
 #| echo: false
 #| output: true
-#| fig-cap: "Execution Time by Dataset Size"
+#| fig-cap: "Python leanfe Performance: Time and Memory by Dataset Size"
 
 import matplotlib.pyplot as plt
 
-fig, ax = plt.subplots(figsize=(10, 6))
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-n_obs = [r["n_obs"] / 1_000_000 for r in benchmark_results]
-polars_times = [r["polars_time"] for r in benchmark_results]
-duckdb_times = [r["duckdb_time"] for r in benchmark_results]
+n_obs = [r["n_obs"] / 1_000_000 for r in py_results]
+polars_times = [r["py_polars_time"] for r in py_results]
+duckdb_times = [r["py_duckdb_time"] for r in py_results]
+polars_mem = [r["py_polars_mem"] / 1024 / 1024 for r in py_results]
+duckdb_mem = [r["py_duckdb_mem"] / 1024 / 1024 for r in py_results]
 
-x = range(len(n_obs))
-width = 0.35
+# Left plot: Execution time
+ax1.plot(n_obs, polars_times, 'o-', label='Polars', color='steelblue', linewidth=2, markersize=8)
+ax1.plot(n_obs, duckdb_times, 's-', label='DuckDB', color='coral', linewidth=2, markersize=8)
+ax1.set_xlabel('Dataset Size (millions)', fontsize=12)
+ax1.set_ylabel('Time (seconds)', fontsize=12)
+ax1.set_title('Execution Time', fontsize=14)
+ax1.legend()
+ax1.grid(True, alpha=0.3)
 
-bars1 = ax.bar([i - width/2 for i in x], polars_times, width, label='Polars', color='steelblue')
-bars2 = ax.bar([i + width/2 for i in x], duckdb_times, width, label='DuckDB', color='coral')
-
-ax.set_xlabel('Dataset Size (millions of observations)', fontsize=12)
-ax.set_ylabel('Time (seconds)', fontsize=12)
-ax.set_title('leanfe Performance: Polars vs DuckDB', fontsize=14)
-ax.set_xticks(x)
-ax.set_xticklabels([f'{n:.1f}M' for n in n_obs])
-ax.legend()
-ax.grid(True, alpha=0.3, axis='y')
-
-# Add value labels
-for bar in bars1:
-    height = bar.get_height()
-    ax.annotate(f'{height:.2f}s', xy=(bar.get_x() + bar.get_width()/2, height),
-                xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=9)
-for bar in bars2:
-    height = bar.get_height()
-    ax.annotate(f'{height:.2f}s', xy=(bar.get_x() + bar.get_width()/2, height),
-                xytext=(0, 3), textcoords="offset points", ha='center', va='bottom', fontsize=9)
+# Right plot: Memory usage
+ax2.plot(n_obs, polars_mem, 'o-', label='Polars', color='steelblue', linewidth=2, markersize=8)
+ax2.plot(n_obs, duckdb_mem, 's-', label='DuckDB', color='coral', linewidth=2, markersize=8)
+ax2.set_xlabel('Dataset Size (millions)', fontsize=12)
+ax2.set_ylabel('Peak Memory (MB)', fontsize=12)
+ax2.set_title('Memory Usage', fontsize=14)
+ax2.legend()
+ax2.grid(True, alpha=0.3)
 
 plt.tight_layout()
 plt.show()
@@ -149,15 +254,7 @@ plt.show()
 
 ## Memory Efficiency
 
-The DuckDB backend's key advantage is memory efficiency:
-
-| Dataset Size | Polars Memory | DuckDB Memory |
-|--------------|---------------|---------------|
-| 1M obs | ~150 MB | ~50 MB |
-| 5M obs | ~600 MB | ~100 MB |
-| 10M obs | ~1.2 GB | ~150 MB |
-
-**DuckDB can process datasets larger than available RAM** by streaming from parquet files.
+**DuckDB can process datasets larger than available RAM** by streaming from parquet files. The memory measurements above show peak Python heap usage during regression.
 
 ## When to Use Each Backend
 
@@ -173,29 +270,21 @@ The DuckDB backend's key advantage is memory efficiency:
 
 ## Compression Ratio
 
-The compression ratio depends on the number of unique (regressor, FE) combinations:
+The compression ratio depends on the number of unique (regressor, FE) combinations. With discrete regressors (binary treatment + categorical x1), YOCO achieves significant compression:
 
 ```{python}
 #| echo: true
 #| output: true
 
-# Show compression in action
-np.random.seed(42)
-n = 1_000_000
+# Show compression across different dataset sizes
+print("Compression Ratio by Dataset Size")
+print("=" * 50)
+print(f"{'Observations':>15} {'Compressed':>15} {'Ratio':>10}")
+print("-" * 50)
 
-# Discrete regressors = high compression
-df_discrete = pl.DataFrame({
-    "y": np.random.normal(0, 1, n),
-    "treatment": np.random.binomial(1, 0.3, n).astype(float),  # Binary
-    "fe1": np.random.randint(1, 501, n),
-    "fe2": np.random.randint(1, 101, n),
-})
-
-result = leanfe(data=df_discrete, formula="y ~ treatment | fe1 + fe2", vcov="iid")
-print(f"Discrete regressors (1M obs):")
-print(f"  Original rows:   {result['n_obs']:,}")
-print(f"  Compressed rows: {result['n_compressed']:,}")
-print(f"  Compression:     {result['compression_ratio']:.1%}")
+for r in py_results:
+    n_compressed = int(r["n_obs"] * r["compression"])
+    print(f"{r['n_obs']:>15,} {n_compressed:>15,} {r['compression']:>9.1%}")
 ```
 
 ## Coefficient Validation

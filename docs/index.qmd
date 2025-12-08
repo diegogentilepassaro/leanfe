@@ -26,7 +26,7 @@ High-dimensional fixed effects regression that's **fast** when you need speed, a
 
 ::: {.g-col-12 .g-col-md-6 .g-col-lg-3}
 ### ⚡ Speed
-**YOCO + sparse matrices** compress data 10-1000x and solve 20x faster. Process millions of observations in seconds.
+**YOCO + sparse matrices** compress data dramatically and solve much faster. Process millions of observations in seconds.
 :::
 
 ::: {.g-col-12 .g-col-md-6 .g-col-lg-3}
@@ -46,13 +46,13 @@ High-dimensional fixed effects regression that's **fast** when you need speed, a
 
 :::
 
-## How It Works: YOCO + Sparse Matrices
+## How It Works: Three Key Innovations
 
-leanfe achieves its speed through two key innovations:
+leanfe achieves its speed and memory efficiency through three key innovations:
 
 ### 1. YOCO Compression (You Only Compress Once)
 
-For IID and HC1 standard errors, many observations share the same regressor values. Instead of processing each row individually, leanfe groups identical rows together:
+From [Wong et al. (2021)](https://arxiv.org/abs/2102.11297): many observations share the same regressor values. Instead of processing each row individually, leanfe groups identical rows together:
 
 ```
 Original: 5M rows with binary treatment × 500 firms × 100 products
@@ -63,11 +63,21 @@ The math is **lossless** — coefficients and standard errors are identical to t
 
 ### 2. Sparse FE Dummies
 
-With 500 firms + 100 products, the design matrix has ~600 FE dummy columns. But each row only has **2 non-zeros** (one per FE). Sparse matrices:
+With many FE levels, the design matrix has many dummy columns. But each row only has a few non-zeros (one per FE). Sparse matrices:
 
-- **Store only non-zeros**: 99.7% memory reduction
-- **Skip zero operations**: Matrix multiplication is 10x faster
+- **Store only non-zeros**: Massive memory reduction
+- **Skip zero operations**: Much faster matrix multiplication
 - **Scale effortlessly**: Adding more FE levels costs almost nothing
+
+### 3. Sparse Cluster Matrix for Clustered SEs
+
+For clustered standard errors, leanfe implements **Section 5.3.1** of Wong et al. (2021):
+
+1. **Within-cluster compression**: Include cluster ID in GROUP BY, so each compressed record belongs to exactly one cluster
+2. **Sparse cluster matrix W̃_C**: Maps groups to clusters (G × C matrix with one 1 per row)
+3. **Vectorized aggregation**: `cluster_scores = W̃_Cᵀ @ (X × ẽ⁰)` — no loops over clusters!
+
+This makes clustered SEs just as fast as IID/HC1, even with thousands of clusters.
 
 ### The Result
 
@@ -77,6 +87,56 @@ With 500 firms + 100 products, the design matrix has ~600 FE dummy columns. But 
 | 5M rows | 3.7s | 0.15s | **24.6x** |
 
 [Learn more about the methodology →](benchmarks/methodology.qmd)
+
+## Two Backends: Speed vs Memory
+
+leanfe offers two backends optimized for different scenarios:
+
+::: {.grid}
+
+::: {.g-col-12 .g-col-md-6}
+### ⚡ Polars Backend (Default)
+
+**Best for: Maximum speed when data fits in memory**
+
+- Blazing fast in-memory DataFrame operations
+- Lazy evaluation and query optimization
+- Zero-copy data sharing with NumPy
+- Ideal for interactive analysis and iteration
+
+```python
+# Default: fastest option
+result = leanfe(data=df, formula="y ~ x | fe", backend="polars")
+```
+:::
+
+::: {.g-col-12 .g-col-md-6}
+### 💾 DuckDB Backend
+
+**Best for: Large datasets that exceed available RAM**
+
+- Streams data from disk (parquet files)
+- Constant memory usage regardless of dataset size
+- SQL-based query engine with automatic optimization
+- Can process 100GB+ datasets on a laptop
+
+```python
+# Memory-efficient: handles data larger than RAM
+result = leanfe(data="huge_data.parquet", formula="y ~ x | fe", backend="duckdb")
+```
+:::
+
+:::
+
+| Scenario | Recommended Backend |
+|----------|---------------------|
+| Data fits in memory, need speed | **Polars** |
+| Data larger than RAM | **DuckDB** |
+| Reading from parquet files | **DuckDB** |
+| Running many regressions on same data | **Polars** |
+| Memory-constrained environment | **DuckDB** |
+
+Both backends use YOCO compression + sparse matrices automatically for all SE types.
 
 ## Quick Example
 
@@ -148,27 +208,21 @@ result <- leanfe(
 
 ## Performance
 
-**YOCO + sparse matrices** make leanfe extremely fast for IID/HC1 standard errors. DuckDB uses far less memory and can process datasets larger than RAM.
+**YOCO + sparse matrices** make leanfe extremely fast for **all standard error types** — IID, HC1, and clustered. DuckDB uses far less memory and can process datasets larger than RAM.
 
-### Python (IID Standard Errors with YOCO + Sparse)
+::: {.callout-note}
+## Live Benchmarks
+All performance numbers are generated from live benchmarks on standardized synthetic data. See the benchmark pages for current results on your hardware.
+:::
 
-| Dataset Size | Polars | DuckDB | Compression |
-|-------------|--------|--------|-------------|
-| 100K obs | 0.05s | 0.5s | 60% |
-| 1M obs | 0.09s | 0.8s | 10% |
-| 5M obs | 0.15s | 1.5s | 2% |
+**Key characteristics:**
 
-### Python (Clustered SEs - Traditional FWL)
+- **Polars**: Fastest execution, higher memory usage
+- **DuckDB**: Slightly slower, minimal memory (can handle data larger than RAM)
+- **YOCO compression**: Reduces data significantly for discrete regressors
+- **Scales to 50M+ observations**: Tested on large datasets
 
-| Dataset Size | Polars | DuckDB | 
-|-------------|--------|--------|
-| 100K obs | 0.08s | 0.1s |
-| 1M obs | 0.7s | 1.0s |
-| 5M obs | 3.5s | 5.0s |
-
-**YOCO speedup**: 7-25x faster than traditional FWL for IID/HC1 standard errors.
-
-[View detailed benchmarks →](benchmarks/overview.qmd)
+[View IID/HC1 benchmarks →](benchmarks/overview.qmd) | [Clustered SE benchmarks →](benchmarks/cluster-se.qmd)
 
 ## Installation
 

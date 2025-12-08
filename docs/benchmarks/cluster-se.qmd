@@ -54,6 +54,14 @@ This avoids explicit loops and enables vectorized computation.
 
 ## Benchmark: Clustered SEs
 
+All benchmarks use standardized data generation (see [Methodology](methodology.qmd)):
+
+- **FE1**: 500 levels, **FE2**: 100 levels
+- **Regressors**: Binary treatment + discrete x1 (0, 1, 2)
+- **Clusters**: Scaled with dataset size
+
+### Python Benchmarks
+
 ```{python}
 #| echo: true
 #| output: true
@@ -61,50 +69,64 @@ This avoids explicit loops and enables vectorized computation.
 import numpy as np
 import polars as pl
 import time
+import tracemalloc
+import gc
 from leanfe import leanfe
 
 np.random.seed(42)
 
-def benchmark_cluster_se(n_obs, n_clusters, n_fe=100):
-    """Benchmark clustered SE computation."""
+def generate_cluster_data(n_obs, n_clusters, n_fe1=500, n_fe2=100):
+    """Standardized benchmark data with clusters."""
+    fe1 = np.random.randint(1, n_fe1 + 1, n_obs)
+    fe2 = np.random.randint(1, n_fe2 + 1, n_obs)
+    fe1_effects = np.random.normal(0, 1, n_fe1 + 1)[fe1]
+    fe2_effects = np.random.normal(0, 0.5, n_fe2 + 1)[fe2]
+    
     cluster_id = np.random.randint(0, n_clusters, n_obs)
-    fe1 = np.random.randint(1, n_fe + 1, n_obs)
+    cluster_effects = np.random.normal(0, 0.5, n_clusters)[cluster_id]
     
     treatment = np.random.binomial(1, 0.3, n_obs).astype(float)
-    x1 = np.random.choice([0, 1, 2], n_obs).astype(float)  # Discrete for compression
+    x1 = np.random.choice([0.0, 1.0, 2.0], n_obs)
     
-    # Clustered errors
-    cluster_effects = np.random.normal(0, 1, n_clusters)[cluster_id]
-    y = 2.5 * treatment + 1.5 * x1 + cluster_effects + np.random.normal(0, 1, n_obs)
+    y = 2.5 * treatment + 1.5 * x1 + fe1_effects + fe2_effects + cluster_effects + np.random.normal(0, 1, n_obs)
     
-    df = pl.DataFrame({
+    return pl.DataFrame({
         "y": y, "treatment": treatment, "x1": x1,
-        "fe1": fe1, "cluster_id": cluster_id
+        "fe1": fe1, "fe2": fe2, "cluster_id": cluster_id
     })
+
+def benchmark_cluster_se(n_obs, n_clusters):
+    """Benchmark clustered SE with time and memory."""
+    gc.collect()
+    df = generate_cluster_data(n_obs, n_clusters)
+    results = {"n_obs": n_obs, "n_clusters": n_clusters}
     
-    results = {}
-    
-    # Polars backend
+    # Polars benchmark
+    gc.collect()
+    tracemalloc.start()
     start = time.time()
     result_polars = leanfe(
-        formula="y ~ treatment + x1 | fe1",
+        formula="y ~ treatment + x1 | fe1 + fe2",
         data=df, vcov="cluster", cluster_cols=["cluster_id"],
         backend="polars"
     )
-    results["polars_time"] = time.time() - start
-    results["polars_strategy"] = result_polars.get("strategy", "N/A")
-    results["n_clusters"] = result_polars.get("n_clusters")
-    results["compression_ratio"] = result_polars.get("compression_ratio", 1.0)
+    results["py_polars_time"] = time.time() - start
+    _, results["py_polars_mem"] = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    results["compression"] = result_polars.get("compression_ratio", 1.0)
     
-    # DuckDB backend
+    # DuckDB benchmark
+    gc.collect()
+    tracemalloc.start()
     start = time.time()
     result_duckdb = leanfe(
-        formula="y ~ treatment + x1 | fe1",
+        formula="y ~ treatment + x1 | fe1 + fe2",
         data=df, vcov="cluster", cluster_cols=["cluster_id"],
         backend="duckdb"
     )
-    results["duckdb_time"] = time.time() - start
-    results["duckdb_strategy"] = result_duckdb.get("strategy", "N/A")
+    results["py_duckdb_time"] = time.time() - start
+    _, results["py_duckdb_mem"] = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
     
     # Verify SEs match
     results["se_match"] = np.allclose(
@@ -115,138 +137,184 @@ def benchmark_cluster_se(n_obs, n_clusters, n_fe=100):
     
     return results
 
-# Run benchmarks
-print("Clustered SE Benchmarks (YOCO + Sparse Matrix)")
-print("=" * 60)
-
+# Run benchmarks: 100K, 1M, 10M
 configs = [
     (100_000, 100),
-    (500_000, 500),
-    (1_000_000, 1000),
-    (2_000_000, 2000),
+    (1_000_000, 1_000),
+    (10_000_000, 5_000),
 ]
 
-print(f"{'Obs':>12} {'Clusters':>10} {'Polars':>10} {'DuckDB':>10} {'Compress':>10} {'Match':>8}")
-print("-" * 60)
+print("Python Clustered SE Benchmarks (YOCO + Sparse Matrix)")
+print("=" * 90)
+print(f"{'Obs':>12} {'Clusters':>10} {'Polars':>10} {'DuckDB':>10} {'Polars Mem':>12} {'DuckDB Mem':>12} {'Compress':>10}")
+print("-" * 90)
 
-benchmark_results = []
+py_cluster_results = []
 for n_obs, n_clusters in configs:
     result = benchmark_cluster_se(n_obs, n_clusters)
-    benchmark_results.append({
-        "n_obs": n_obs,
-        "n_clusters": n_clusters,
-        **result
-    })
-    print(f"{n_obs:>12,} {n_clusters:>10,} {result['polars_time']:>9.2f}s {result['duckdb_time']:>9.2f}s {result['compression_ratio']:>9.1%} {result['se_match']:>8}")
+    py_cluster_results.append(result)
+    polars_mem_mb = result["py_polars_mem"] / 1024 / 1024
+    duckdb_mem_mb = result["py_duckdb_mem"] / 1024 / 1024
+    print(f"{n_obs:>12,} {n_clusters:>10,} {result['py_polars_time']:>9.2f}s {result['py_duckdb_time']:>9.2f}s {polars_mem_mb:>10.0f} MB {duckdb_mem_mb:>10.0f} MB {result['compression']:>9.1%}")
 
 print("\n✓ All backends use YOCO compression strategy")
 print("✓ Clustered SEs computed from compressed data")
 print("✓ Results match between Polars and DuckDB")
 ```
 
-## Performance Chart
+### R Benchmarks
+
+```{r}
+#| echo: false
+#| output: true
+#| eval: true
+
+library(polars)
+library(duckdb)
+library(DBI)
+library(Matrix)
+
+# Source leanfe R package
+source("../../r/R/common.R")
+source("../../r/R/compress.R")
+source("../../r/R/polars.R")
+source("../../r/R/duckdb.R")
+
+set.seed(42)
+
+generate_cluster_data <- function(n_obs, n_clusters, n_fe1 = 500, n_fe2 = 100) {
+  fe1 <- sample(1:n_fe1, n_obs, replace = TRUE)
+  fe2 <- sample(1:n_fe2, n_obs, replace = TRUE)
+  fe1_effects <- rnorm(n_fe1 + 1)[fe1]
+  fe2_effects <- rnorm(n_fe2 + 1, sd = 0.5)[fe2]
+  
+  cluster_id <- sample(1:n_clusters, n_obs, replace = TRUE)
+  cluster_effects <- rnorm(n_clusters, sd = 0.5)[cluster_id]
+  
+  treatment <- rbinom(n_obs, 1, 0.3)
+  x1 <- sample(c(0, 1, 2), n_obs, replace = TRUE)
+  y <- 2.5 * treatment + 1.5 * x1 + fe1_effects + fe2_effects + cluster_effects + rnorm(n_obs)
+  
+  pl$DataFrame(
+    y = y, treatment = as.numeric(treatment), x1 = as.numeric(x1),
+    fe1 = fe1, fe2 = fe2, cluster_id = cluster_id
+  )
+}
+
+run_r_cluster_benchmark <- function(n_obs, n_clusters) {
+  df <- generate_cluster_data(n_obs, n_clusters)
+  
+  # R Polars benchmark
+  start <- Sys.time()
+  result_polars <- leanfe_polars(data = df, formula = "y ~ treatment + x1 | fe1 + fe2", 
+                                  vcov = "cluster", cluster_cols = "cluster_id")
+  r_polars_time <- as.numeric(difftime(Sys.time(), start, units = "secs"))
+  
+  # R DuckDB benchmark
+  start <- Sys.time()
+  result_duckdb <- leanfe_duckdb(data = df, formula = "y ~ treatment + x1 | fe1 + fe2",
+                                  vcov = "cluster", cluster_cols = "cluster_id")
+  r_duckdb_time <- as.numeric(difftime(Sys.time(), start, units = "secs"))
+  
+  list(
+    n_obs = n_obs,
+    n_clusters = n_clusters,
+    r_polars_time = r_polars_time,
+    r_duckdb_time = r_duckdb_time,
+    compression = result_polars$compression_ratio
+  )
+}
+
+# Run R benchmarks: 100K, 1M, 10M
+configs <- list(
+  c(100000, 100),
+  c(1000000, 1000),
+  c(10000000, 5000)
+)
+
+cat("R Clustered SE Benchmarks (YOCO + Sparse Matrix)\n")
+cat(strrep("=", 70), "\n")
+cat(sprintf("%12s %10s %10s %10s %10s\n", "Obs", "Clusters", "Polars", "DuckDB", "Compress"))
+cat(strrep("-", 70), "\n")
+
+for (cfg in configs) {
+  result <- run_r_cluster_benchmark(cfg[1], cfg[2])
+  cat(sprintf("%12s %10s %9.2fs %9.2fs %9.1f%%\n", 
+              format(cfg[1], big.mark = ",", scientific = FALSE),
+              format(cfg[2], big.mark = ",", scientific = FALSE),
+              result$r_polars_time, 
+              result$r_duckdb_time,
+              result$compression * 100))
+}
+```
+
+## Performance Charts (Python)
 
 ```{python}
 #| echo: false
 #| output: true
-#| fig-cap: "Clustered SE Performance: YOCO + Sparse Matrix"
+#| fig-cap: "Python Clustered SE Performance: Time and Memory"
 
 import matplotlib.pyplot as plt
 
-fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+fig, axes = plt.subplots(1, 3, figsize=(16, 5))
 
-# Left plot: Execution time
-n_obs = [r["n_obs"] / 1_000_000 for r in benchmark_results]
-polars_times = [r["polars_time"] for r in benchmark_results]
-duckdb_times = [r["duckdb_time"] for r in benchmark_results]
+n_obs = [r["n_obs"] / 1_000_000 for r in py_cluster_results]
+polars_times = [r["py_polars_time"] for r in py_cluster_results]
+duckdb_times = [r["py_duckdb_time"] for r in py_cluster_results]
+polars_mem = [r["py_polars_mem"] / 1024 / 1024 for r in py_cluster_results]
+duckdb_mem = [r["py_duckdb_mem"] / 1024 / 1024 for r in py_cluster_results]
+compression = [r["compression"] * 100 for r in py_cluster_results]
 
-ax1.plot(n_obs, polars_times, 'o-', label='Polars', color='steelblue', linewidth=2, markersize=8)
-ax1.plot(n_obs, duckdb_times, 's-', label='DuckDB', color='coral', linewidth=2, markersize=8)
-ax1.set_xlabel('Dataset Size (millions)', fontsize=12)
-ax1.set_ylabel('Time (seconds)', fontsize=12)
-ax1.set_title('Clustered SE Computation Time', fontsize=14)
-ax1.legend()
-ax1.grid(True, alpha=0.3)
+# Plot 1: Execution time
+axes[0].plot(n_obs, polars_times, 'o-', label='Polars', color='steelblue', linewidth=2, markersize=8)
+axes[0].plot(n_obs, duckdb_times, 's-', label='DuckDB', color='coral', linewidth=2, markersize=8)
+axes[0].set_xlabel('Dataset Size (millions)', fontsize=12)
+axes[0].set_ylabel('Time (seconds)', fontsize=12)
+axes[0].set_title('Execution Time', fontsize=14)
+axes[0].legend()
+axes[0].grid(True, alpha=0.3)
 
-# Right plot: Compression ratio
-compression = [r["compression_ratio"] * 100 for r in benchmark_results]
-ax2.bar(range(len(n_obs)), compression, color='forestgreen', alpha=0.7)
-ax2.set_xlabel('Dataset Size', fontsize=12)
-ax2.set_ylabel('Compression Ratio (%)', fontsize=12)
-ax2.set_title('Data Compression with YOCO', fontsize=14)
-ax2.set_xticks(range(len(n_obs)))
-ax2.set_xticklabels([f'{n:.1f}M' for n in n_obs])
-ax2.grid(True, alpha=0.3, axis='y')
+# Plot 2: Memory usage
+axes[1].plot(n_obs, polars_mem, 'o-', label='Polars', color='steelblue', linewidth=2, markersize=8)
+axes[1].plot(n_obs, duckdb_mem, 's-', label='DuckDB', color='coral', linewidth=2, markersize=8)
+axes[1].set_xlabel('Dataset Size (millions)', fontsize=12)
+axes[1].set_ylabel('Peak Memory (MB)', fontsize=12)
+axes[1].set_title('Memory Usage', fontsize=14)
+axes[1].legend()
+axes[1].grid(True, alpha=0.3)
 
-# Add value labels
+# Plot 3: Compression ratio
+axes[2].bar(range(len(n_obs)), compression, color='forestgreen', alpha=0.7)
+axes[2].set_xlabel('Dataset Size', fontsize=12)
+axes[2].set_ylabel('Compression Ratio (%)', fontsize=12)
+axes[2].set_title('YOCO Compression', fontsize=14)
+axes[2].set_xticks(range(len(n_obs)))
+axes[2].set_xticklabels([f'{n:.0f}M' for n in n_obs])
+axes[2].grid(True, alpha=0.3, axis='y')
 for i, v in enumerate(compression):
-    ax2.text(i, v + 1, f'{v:.1f}%', ha='center', fontsize=10)
+    axes[2].text(i, v + 1, f'{v:.1f}%', ha='center', fontsize=10)
 
 plt.tight_layout()
 plt.show()
 ```
 
-## Comparison: YOCO vs Traditional
+## Compression Details
 
-To demonstrate the speedup, let's compare YOCO compression against the traditional FWL demeaning approach:
+The compression ratio shows how much data reduction YOCO achieves:
 
 ```{python}
 #| echo: true
 #| output: true
 
-import numpy as np
-import polars as pl
-import time
+print("YOCO Compression for Clustered SEs")
+print("=" * 60)
+print(f"{'Observations':>15} {'Clusters':>10} {'Compressed':>15} {'Ratio':>10}")
+print("-" * 60)
 
-np.random.seed(42)
-
-def compare_approaches(n_obs, n_clusters):
-    """Compare YOCO compression vs traditional approach."""
-    cluster_id = np.random.randint(0, n_clusters, n_obs)
-    fe1 = np.random.randint(1, 101, n_obs)
-    
-    # Discrete regressors for good compression
-    treatment = np.random.binomial(1, 0.3, n_obs).astype(float)
-    x1 = np.random.choice([0, 1, 2], n_obs).astype(float)
-    
-    cluster_effects = np.random.normal(0, 1, n_clusters)[cluster_id]
-    y = 2.5 * treatment + 1.5 * x1 + cluster_effects + np.random.normal(0, 1, n_obs)
-    
-    df = pl.DataFrame({
-        "y": y, "treatment": treatment, "x1": x1,
-        "fe1": fe1, "cluster_id": cluster_id
-    })
-    
-    # YOCO compression (automatic for cluster SEs now)
-    start = time.time()
-    result_yoco = leanfe(
-        formula="y ~ treatment + x1 | fe1",
-        data=df, vcov="cluster", cluster_cols=["cluster_id"]
-    )
-    yoco_time = time.time() - start
-    
-    return {
-        "n_obs": n_obs,
-        "n_clusters": n_clusters,
-        "yoco_time": yoco_time,
-        "strategy": result_yoco.get("strategy"),
-        "compression": result_yoco.get("compression_ratio", 1.0),
-        "n_compressed": result_yoco.get("n_compressed", n_obs),
-    }
-
-print("YOCO Compression Benefits for Clustered SEs")
-print("=" * 55)
-
-sizes = [(500_000, 500), (1_000_000, 1000), (2_000_000, 2000)]
-
-for n_obs, n_clusters in sizes:
-    result = compare_approaches(n_obs, n_clusters)
-    print(f"\n{n_obs:,} observations, {n_clusters:,} clusters:")
-    print(f"  Strategy: {result['strategy']}")
-    print(f"  Original rows: {n_obs:,}")
-    print(f"  Compressed rows: {result['n_compressed']:,}")
-    print(f"  Compression: {result['compression']:.1%}")
-    print(f"  Time: {result['yoco_time']:.2f}s")
+for r in py_cluster_results:
+    n_compressed = int(r["n_obs"] * r["compression"])
+    print(f"{r['n_obs']:>15,} {r['n_clusters']:>10,} {n_compressed:>15,} {r['compression']:>9.1%}")
 ```
 
 ## R Implementation
@@ -258,8 +326,8 @@ The R package also supports YOCO + sparse matrix for clustered SEs:
 library(Matrix)
 
 # Source the package (in production, use library(leanfe))
-source("../r/R/common.R")
-source("../r/R/compress.R")
+source("../../r/R/common.R")
+source("../../r/R/compress.R")
 
 # Test sparse cluster matrix builder
 cluster_ids <- c("A", "A", "B", "B", "C", "A", "C", "B", "C", "A")
