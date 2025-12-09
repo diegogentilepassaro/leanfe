@@ -37,7 +37,7 @@ jobs:
 
       - name: Install R dependencies
         run: |
-          Rscript -e 'install.packages(c("knitr", "rmarkdown", "duckdb", "DBI", "Matrix"), repos = "https://cloud.r-project.org")'
+          Rscript -e 'install.packages(c("knitr", "rmarkdown", "reticulate", "duckdb", "DBI", "Matrix"), repos = "https://cloud.r-project.org")'
           Rscript -e 'install.packages("polars", repos = "https://community.r-multiverse.org")'
 
       - name: Set up Quarto
