@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-12-09
+
+### Performance Improvements
+
+- **Vectorized clustered SEs**: All 4 implementations (Python/R × Polars/DuckDB) now use sparse matrix multiplication for clustered standard errors instead of loops. ~31x speedup for clustered SEs (464s → 15s for 5,040 clusters).
+
+- **Smart FE ordering**: Fixed effects are now automatically sorted by cardinality (low-card first) during FWL demeaning. Low-cardinality FEs have fewer groups, making GROUP BY operations faster. ~14% speedup in demeaning phase.
+
+- **Improved strategy selection**: Enhanced `should_use_compress()` with cost model that automatically chooses the fastest path:
+  - Single FE > 10K levels → FWL demeaning (avoids huge sparse matrix)
+  - Total FE levels > 20K → FWL demeaning
+  - Otherwise → YOCO compression
+  - Users don't need to configure anything — leanfe picks the optimal strategy based on data characteristics.
+
 ## [0.2.0] - 2025-12-05
 
 ### Changed

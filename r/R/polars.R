@@ -246,7 +246,7 @@ leanfe_polars <- function(
   # Compute FE cardinality to decide strategy
   fe_cardinality <- list()
   for (fe in fe_cols) {
-    fe_cardinality[[fe]] <- df$select(pl$col(fe)$n_unique())$to_list()[[1]]
+    fe_cardinality[[fe]] <- as.data.frame(df$select(pl$col(fe)$n_unique()))[[1]]
   }
   n_obs_initial <- df$height
   use_compress <- .should_use_compress(

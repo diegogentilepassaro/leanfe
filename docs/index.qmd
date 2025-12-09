@@ -46,9 +46,9 @@ High-dimensional fixed effects regression that's **fast** when you need speed, a
 
 :::
 
-## How It Works: Three Key Innovations
+## How It Works: Four Key Innovations
 
-leanfe achieves its speed and memory efficiency through three key innovations:
+leanfe achieves its speed and memory efficiency through four key innovations:
 
 ### 1. YOCO Compression (You Only Compress Once)
 
@@ -78,6 +78,15 @@ For clustered standard errors, leanfe implements **Section 5.3.1** of Wong et al
 3. **Vectorized aggregation**: `cluster_scores = W̃_Cᵀ @ (X × ẽ⁰)` — no loops over clusters!
 
 This makes clustered SEs just as fast as IID/HC1, even with thousands of clusters.
+
+### 4. Smart Strategy Selection
+
+leanfe automatically chooses the optimal computation path based on your data:
+
+- **YOCO compression** for low/medium-cardinality FEs (< 10K levels) — fast sparse matrix operations
+- **FWL demeaning** for high-cardinality FEs (> 10K levels) — avoids huge sparse matrices
+
+Additionally, FEs are automatically sorted by cardinality (low-card first) during demeaning for ~14% faster convergence. You don't need to configure anything — leanfe analyzes your data and picks the fastest strategy.
 
 ### The Result
 

@@ -78,6 +78,12 @@ remotes::install_github("diegogentilepassaro/leanfe", subdir = "r")
 | **Polars** | Maximum speed | Higher memory usage |
 | **DuckDB** | Large datasets | Slightly slower, minimal memory |
 
+**v0.3.0 optimizations:**
+
+- **Vectorized clustered SEs** — Sparse matrix multiplication instead of loops (~31x faster)
+- **Smart FE ordering** — Low-cardinality FEs processed first for faster convergence (~14% speedup)
+- **Automatic strategy selection** — leanfe picks YOCO vs FWL demeaning based on data characteristics
+
 Both backends use YOCO compression + sparse matrices for all SE types (IID, HC1, clustered).
 
 **Tested up to 50M observations** — see [live benchmarks](https://diegogentilepassaro.github.io/leanfe/benchmarks/overview.html) for current performance numbers.
