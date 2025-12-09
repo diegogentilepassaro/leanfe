@@ -240,6 +240,13 @@ class LeanFEResult:
     def __getitem__(self, key):
         return self.to_dict()[key]
     
+    def get(self, key, default=None):
+        """Get item with default value (dict-like interface)."""
+        try:
+            return self.to_dict().get(key, default)
+        except KeyError:
+            return default
+    
     def keys(self):
         return self.to_dict().keys()
     
