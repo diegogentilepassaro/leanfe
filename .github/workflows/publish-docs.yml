@@ -29,7 +29,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          pip install polars duckdb numpy scipy jupyter pyyaml matplotlib pyarrow
+          pip install polars duckdb numpy scipy jupyter pyyaml matplotlib pyarrow pyfixest
           pip install -e python/
 
       - name: Set up R
@@ -39,7 +39,7 @@ jobs:
 
       - name: Install R dependencies
         run: |
-          Rscript -e 'install.packages(c("knitr", "rmarkdown", "reticulate", "duckdb", "DBI", "Matrix"))'
+          Rscript -e 'install.packages(c("knitr", "rmarkdown", "reticulate", "duckdb", "DBI", "Matrix", "fixest"))'
           Rscript -e 'install.packages("polars", repos = "https://community.r-multiverse.org")'
 
       - name: Configure reticulate to use system Python

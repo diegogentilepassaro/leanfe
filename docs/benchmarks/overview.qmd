@@ -87,7 +87,13 @@ import time
 import tracemalloc
 import gc
 from leanfe import leanfe
-import pyfixest as pf
+
+# pyfixest is optional - may not be installed in CI
+try:
+    import pyfixest as pf
+    HAS_PYFIXEST = True
+except ImportError:
+    HAS_PYFIXEST = False
 
 np.random.seed(42)
 
@@ -132,8 +138,8 @@ def run_benchmark(n_obs, include_pyfixest=True):
     _, results["py_duckdb_mem"] = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     
-    # pyfixest benchmark (skip for very large datasets - too slow)
-    if include_pyfixest and n_obs <= 1_000_000:
+    # pyfixest benchmark (skip for very large datasets - too slow, or if not installed)
+    if include_pyfixest and HAS_PYFIXEST and n_obs <= 1_000_000:
         gc.collect()
         df_pd = df.to_pandas()
         tracemalloc.start()
@@ -158,13 +164,14 @@ print(f"{'Obs':>12} {'leanfe-Polars':>14} {'leanfe-DuckDB':>14} {'pyfixest':>12}
 print("-" * 95)
 
 for n in sizes:
-    result = run_benchmark(n, include_pyfixest=(n <= 1_000_000))
+    result = run_benchmark(n, include_pyfixest=HAS_PYFIXEST and (n <= 1_000_000))
     py_results.append(result)
     pyfixest_str = f"{result['pyfixest_time']:.2f}s" if result['pyfixest_time'] else "skipped"
     speedup = f"{result['pyfixest_time'] / result['py_polars_time']:.1f}x" if result['pyfixest_time'] else "-"
     print(f"{n:>12,} {result['py_polars_time']:>13.2f}s {result['py_duckdb_time']:>13.2f}s {pyfixest_str:>12} {speedup:>10}")
 
-print("\nNote: pyfixest skipped for 10M rows (too slow)")
+pyfixest_note = "pyfixest skipped for 10M rows (too slow)" if HAS_PYFIXEST else "pyfixest not installed"
+print(f"\nNote: {pyfixest_note}")
 ```
 
 ### R Benchmarks
