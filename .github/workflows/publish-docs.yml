@@ -37,8 +37,10 @@ jobs:
 
       - name: Install R dependencies
         run: |
-          Rscript -e 'install.packages(c("knitr", "rmarkdown", "reticulate", "duckdb", "DBI", "Matrix"), repos = "https://cloud.r-project.org")'
+          Rscript -e 'install.packages("pak", repos = "https://cloud.r-project.org")'
+          Rscript -e 'pak::pak(c("knitr", "rmarkdown", "reticulate", "duckdb", "DBI", "Matrix"))'
           Rscript -e 'install.packages("polars", repos = "https://community.r-multiverse.org")'
+          Rscript -e 'library(reticulate); print(reticulate::py_config())'
 
       - name: Set up Quarto
         uses: quarto-dev/quarto-actions/setup@v2
