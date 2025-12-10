@@ -23,7 +23,7 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install polars duckdb numpy scipy pytest
+          pip install polars duckdb numpy scipy pytest pyarrow
           pip install -e python/
       
       - name: Run Python tests
